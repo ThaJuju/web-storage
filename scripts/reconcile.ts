@@ -1,8 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+// Prisma 7 ne charge plus .env : a importer avant le client.
+import "dotenv/config";
+import { prisma } from "../src/lib/db";
 import { readdir, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
-const prisma = new PrismaClient();
 
 /**
  * Reconciliation base <-> disque.

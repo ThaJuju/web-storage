@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { deleteFromDisk } from "./storage";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 
 /**
  * Coeur de la logique d'arborescence. TOUTE lecture/ecriture d'un node passe

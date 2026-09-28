@@ -49,3 +49,6 @@ next-env.d.ts
 # instructions locales pour les agents IA
 CLAUDE.md
 AGENTS.md
+
+# client Prisma genere (npm install / prisma generate)
+/src/generated/

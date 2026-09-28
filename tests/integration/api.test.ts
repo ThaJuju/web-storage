@@ -1,11 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, USERS, baseUrl } from "./client";
 
-const prisma = new PrismaClient();
 const alice = new Client();
 const bob = new Client();
 const admin = new Client();

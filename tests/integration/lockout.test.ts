@@ -1,9 +1,8 @@
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/db";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { getLoginLockout } from "@/lib/rate-limit";
 
 // getLoginLockout lit le journal des connexions : on l'alimente directement.
-const prisma = new PrismaClient();
 const EMAIL = "cible@test.fr";
 
 async function fail(email: string, ip: string, n = 1) {
