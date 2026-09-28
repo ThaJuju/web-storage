@@ -1,6 +1,6 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+// Prisma 7 ne charge plus .env : a importer avant le client.
+import "dotenv/config";
+import { prisma } from "../src/lib/db";
 
 /**
  * Liste les fichiers probablement tronques par l'ancien bug du proxy (issue

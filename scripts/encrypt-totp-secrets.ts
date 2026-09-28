@@ -1,10 +1,11 @@
-import { PrismaClient } from "@prisma/client";
+// Prisma 7 ne charge plus .env : a importer avant le client.
+import "dotenv/config";
+import { prisma } from "../src/lib/db";
 import {
   encryptTotpSecret,
   isEncryptedTotpSecret,
 } from "../src/lib/totp-crypto";
 
-const prisma = new PrismaClient();
 
 /**
  * Chiffre les secrets TOTP encore stockes en clair (comptes enroles avant le

@@ -1,10 +1,13 @@
+// Prisma 7 : client genere dans src/generated/prisma (non versionne,
+// `npm install` le regenere) ; l'URL de la base est dans prisma.config.ts et,
+// a l'execution, passee a l'adaptateur libSQL (src/lib/db.ts).
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
 }
 
 model User {

@@ -2,7 +2,7 @@ import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import bcrypt from "bcryptjs";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "../../src/lib/db";
 import type { TestProject } from "vitest/node";
 import { USERS } from "./fixtures";
 
@@ -37,7 +37,6 @@ export default async function setup(project: TestProject) {
   }
   execSync("npx prisma migrate deploy", { env: process.env, stdio: "ignore" });
 
-  const prisma = new PrismaClient();
   for (const u of Object.values(USERS)) {
     await prisma.user.create({
       data: {

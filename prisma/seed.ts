@@ -1,8 +1,9 @@
-import { PrismaClient } from "@prisma/client";
+// Prisma 7 ne charge plus .env : a importer avant le client.
+import "dotenv/config";
+import { prisma } from "../src/lib/db";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 
-const prisma = new PrismaClient();
 
 /**
  * Cree le compte initial (aucune inscription publique). Le mot de passe est

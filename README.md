@@ -14,7 +14,7 @@ la volée et indicateur de quota. Aucune inscription publique.
 | Composant | Choix |
 |---|---|
 | Framework | Next.js 16 (App Router, TypeScript) — frontend + API dans une seule app |
-| Base de données | SQLite via Prisma (métadonnées uniquement) |
+| Base de données | SQLite via Prisma 7 + adaptateur libSQL (métadonnées uniquement) ; client généré dans `src/generated/prisma` par `npm install` |
 | Sessions | table `Session` en base ; cookie `iron-session` chiffré (`httpOnly`, `sameSite=strict`, `secure` si `APP_HTTPS=true`) ne portant qu'un identifiant |
 | Mots de passe | `bcrypt` (coût 12) |
 | Zip à la volée | `archiver` (streaming, sans fichier temporaire) |
