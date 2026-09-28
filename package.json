@@ -12,7 +12,8 @@
     "db:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
     "set-password": "tsx scripts/set-password.ts",
-    "find-truncated": "tsx scripts/find-truncated-uploads.ts"
+    "find-truncated": "tsx scripts/find-truncated-uploads.ts",
+    "reconcile": "tsx scripts/reconcile.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

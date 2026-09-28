@@ -57,7 +57,15 @@ Session   id (sha256 de l'identifiant du cookie), userId,
 Fichiers et dossiers partagent la table `Node` (arbre par `parentId`) : le
 renommage, le déplacement, la suppression récursive et le fil d'ariane sont
 codés une seule fois. `usedBytes` est mis à jour dans la **même transaction**
-que chaque upload/suppression, pour un quota instantané.
+que chaque upload/suppression, pour un quota instantané : incrément
+conditionnel atomique à l'upload (`usedBytes + taille <= quotaBytes`),
+descendants recensés dans la transaction de suppression. En cas d'incident
+(crash entre l'écriture disque et la base, effacement disque raté…) :
+
+```bash
+npm run reconcile          # rapport : quotas faux, orphelins disque, fichiers manquants
+npm run reconcile -- --fix # recalcule usedBytes et supprime les orphelins disque
+```
 
 ### Structure des dossiers
 

@@ -179,57 +179,61 @@ export async function wouldCreateCycle(
 }
 
 /**
- * Supprime recursivement un node (et ses descendants pour un dossier),
- * efface les fichiers du disque et decremente le quota utilise, le tout dans
- * une transaction.
+ * Supprime recursivement un node (et ses descendants pour un dossier) et
+ * decremente le quota utilise, le tout dans UNE transaction :
+ *  - la transaction commence par une ecriture sur l'utilisateur, ce qui
+ *    prend le verrou d'ecriture SQLite : aucun upload concurrent ne peut
+ *    s'inserer dans le sous-arbre entre le recensement et la suppression ;
+ *  - les descendants sont recenses par une CTE recursive DANS la
+ *    transaction, et le quota est decremente du total recalcule.
+ * Les fichiers disque sont ensuite effaces hors transaction (best-effort) :
+ * un echec est journalise sans faire echouer la requete, la base etant deja
+ * coherente (les orphelins sont traites par `npm run reconcile`).
  */
 export async function deleteNodeRecursive(
   ownerId: string,
   nodeId: string
 ): Promise<void> {
-  // Rassemble tous les descendants + le node lui-meme (parcours iteratif).
-  const toVisit = [nodeId];
-  const allNodes: {
-    id: string;
-    type: string;
-    size: bigint;
-    storageKey: string | null;
-  }[] = [];
+  const fileKeys = await withUniqueRetry(() =>
+    prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`UPDATE "User" SET "usedBytes" = "usedBytes" WHERE "id" = ${ownerId}`;
 
-  while (toVisit.length) {
-    const batch = toVisit.splice(0, 200);
-    const children = await prisma.node.findMany({
-      where: { ownerId, parentId: { in: batch } },
-      select: { id: true, type: true, size: true, storageKey: true },
-    });
-    for (const c of children) {
-      allNodes.push(c);
-      if (c.type === "FOLDER") toVisit.push(c.id);
-    }
+      const rows = await tx.$queryRaw<
+        { type: string; size: bigint | number; storageKey: string | null }[]
+      >`
+        WITH RECURSIVE sub("id") AS (
+          SELECT "id" FROM "Node" WHERE "id" = ${nodeId} AND "ownerId" = ${ownerId}
+          UNION ALL
+          SELECT n."id" FROM "Node" n JOIN sub ON n."parentId" = sub."id"
+          WHERE n."ownerId" = ${ownerId}
+        )
+        SELECT n."type", n."size", n."storageKey"
+        FROM "Node" n JOIN sub ON n."id" = sub."id"`;
+      if (rows.length === 0) return [];
+
+      const freedBytes = rows.reduce((acc, n) => acc + BigInt(n.size), 0n);
+
+      // La contrainte onDelete: Cascade sur parentId efface tous les descendants.
+      await tx.node.delete({ where: { id: nodeId } });
+      if (freedBytes > 0n) {
+        await tx.user.update({
+          where: { id: ownerId },
+          data: { usedBytes: { decrement: freedBytes } },
+        });
+      }
+      return rows
+        .filter((n) => n.type === "FILE" && n.storageKey)
+        .map((n) => n.storageKey as string);
+    })
+  );
+
+  const results = await Promise.allSettled(
+    fileKeys.map((k) => deleteFromDisk(ownerId, k))
+  );
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (failed > 0) {
+    console.error(
+      `[web-storage] ${failed} fichier(s) non efface(s) du disque apres suppression de ${nodeId} (utilisateur ${ownerId}) : lancer npm run reconcile.`
+    );
   }
-  const self = await prisma.node.findFirst({
-    where: { id: nodeId, ownerId },
-    select: { id: true, type: true, size: true, storageKey: true },
-  });
-  if (!self) return;
-  allNodes.push(self);
-
-  const freedBytes = allNodes.reduce((acc, n) => acc + n.size, 0n);
-  const fileKeys = allNodes
-    .filter((n) => n.type === "FILE" && n.storageKey)
-    .map((n) => n.storageKey!) as string[];
-
-  await prisma.$transaction(async (tx) => {
-    // La contrainte onDelete: Cascade sur parentId efface tous les descendants.
-    await tx.node.delete({ where: { id: nodeId } });
-    if (freedBytes > 0n) {
-      await tx.user.update({
-        where: { id: ownerId },
-        data: { usedBytes: { decrement: freedBytes } },
-      });
-    }
-  });
-
-  // Effacement disque hors transaction (best-effort) : la DB est deja coherente.
-  await Promise.all(fileKeys.map((k) => deleteFromDisk(ownerId, k)));
 }

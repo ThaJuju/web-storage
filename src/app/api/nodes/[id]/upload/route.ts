@@ -158,14 +158,12 @@ async function handleUpload(
     // dossier entre la verification et l'insertion (P2002 / P2034).
     const node = await withUniqueRetry(() =>
       prisma.$transaction(async (tx) => {
-        // Verifie le quota de facon atomique (relecture dans la transaction).
-        const u = await tx.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { usedBytes: true, quotaBytes: true },
-        });
-        if (u.usedBytes + actualSize > u.quotaBytes) {
-          throw new QuotaExceeded();
-        }
+        // Reserve le quota par un increment CONDITIONNEL atomique : deux
+        // uploads concurrents ne peuvent plus depasser le quota ensemble.
+        const reserved = await tx.$executeRaw`
+          UPDATE "User" SET "usedBytes" = "usedBytes" + ${actualSize}
+          WHERE "id" = ${userId} AND "usedBytes" + ${actualSize} <= "quotaBytes"`;
+        if (reserved !== 1) throw new QuotaExceeded();
 
         // Recree l'arborescence de dossiers (upload de dossier).
         let parentId = folder.id;
@@ -186,10 +184,6 @@ async function handleUpload(
             mimeType,
             storageKey,
           },
-        });
-        await tx.user.update({
-          where: { id: userId },
-          data: { usedBytes: { increment: actualSize } },
         });
         return created;
       })

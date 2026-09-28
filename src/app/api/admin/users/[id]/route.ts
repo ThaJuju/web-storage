@@ -128,9 +128,16 @@ export async function DELETE(
     }
   }
 
-  // Cascade DB (onDelete: Cascade sur Node) puis effacement disque.
+  // Cascade DB (onDelete: Cascade sur Node) puis effacement disque. Un echec
+  // disque ne remet pas en cause la suppression du compte : journalise, et
+  // `npm run reconcile` retrouvera le dossier orphelin.
   await prisma.user.delete({ where: { id } });
-  await deleteUserStorage(id);
+  await deleteUserStorage(id).catch((err) => {
+    console.error(
+      `[web-storage] Stockage de l'utilisateur supprime ${id} non efface : lancer npm run reconcile.`,
+      err
+    );
+  });
 
   return json({ ok: true });
 }
