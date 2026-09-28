@@ -290,6 +290,13 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
           >
             <NewFolderIcon /> Nouveau dossier
           </button>
+          <a
+            href={`/api/nodes/${folderId}/zip`}
+            className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800/60"
+            title="Télécharger tout le contenu de ce dossier en .zip"
+          >
+            <DownloadIcon /> Tout télécharger (.zip)
+          </a>
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-slate-700 p-0.5">
             <button
               onClick={() => setView("list")}
