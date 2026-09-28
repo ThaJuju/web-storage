@@ -45,3 +45,7 @@ next-env.d.ts
 /storage/
 *.db
 *.db-journal
+
+# instructions locales pour les agents IA
+CLAUDE.md
+AGENTS.md
