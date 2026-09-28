@@ -102,9 +102,19 @@ export async function searchNodes(ownerId: string, query: string) {
   return rows.map(toPublicNode);
 }
 
+/** Un fichier porte deja le nom du dossier a creer. */
+export class FolderNameConflict extends Error {
+  constructor(public folderName: string) {
+    super(`Un fichier nomme "${folderName}" existe deja`);
+  }
+}
+
 /**
  * Trouve (ou cree) un sous-dossier par nom sous un parent donne, pour un
- * meme proprietaire. Utilise lors de l'upload de dossiers.
+ * meme proprietaire. Utilise lors de l'upload de dossiers. Si deux uploads
+ * concurrents creent le meme dossier, la contrainte d'unicite leve P2002 :
+ * l'appelant rejoue alors la transaction (withUniqueRetry), qui retrouve le
+ * dossier cree entre-temps.
  */
 export async function ensureSubfolder(
   tx: Prisma.TransactionClient,
@@ -113,13 +123,37 @@ export async function ensureSubfolder(
   name: string
 ): Promise<string> {
   const existing = await tx.node.findFirst({
-    where: { ownerId, parentId, name, type: "FOLDER" },
+    where: { ownerId, parentId, name },
+    select: { id: true, type: true },
   });
-  if (existing) return existing.id;
+  if (existing) {
+    if (existing.type !== "FOLDER") throw new FolderNameConflict(name);
+    return existing.id;
+  }
   const created = await tx.node.create({
     data: { ownerId, parentId, name, type: "FOLDER" },
   });
   return created.id;
+}
+
+/**
+ * Rejoue `fn` en cas de collision d'unicite (P2002) ou de conflit d'ecriture
+ * SQLite (P2034) : deux ecritures concurrentes ont vise le meme nom. Le
+ * nouvel essai relit l'etat a jour (dossier deja cree, nom deja pris...).
+ */
+export async function withUniqueRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 5
+): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (i >= attempts || (code !== "P2002" && code !== "P2034")) throw e;
+      await new Promise((r) => setTimeout(r, 10 * i + Math.random() * 20));
+    }
+  }
 }
 
 /**

@@ -38,6 +38,10 @@ model Node {
   parent   Node?  @relation("Tree", fields: [parentId], references: [id], onDelete: Cascade)
   children Node[] @relation("Tree")
 
+  // NB : en SQLite les NULL sont distincts dans un index UNIQUE -> cette
+  // contrainte ne couvre pas la racine (parentId NULL). Un index unique
+  // partiel "Node_ownerId_root_name_key" (ownerId, name) WHERE parentId IS
+  // NULL est cree a la main dans la migration unique_root_names.
   @@unique([ownerId, parentId, name])
   @@index([ownerId, parentId])
   @@index([ownerId, name])

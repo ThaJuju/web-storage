@@ -1,7 +1,13 @@
 import { type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { error, json, requireUser, isResponse } from "@/lib/api";
-import { ensureSubfolder, resolveFolder, toPublicNode } from "@/lib/nodes";
+import {
+  FolderNameConflict,
+  ensureSubfolder,
+  resolveFolder,
+  toPublicNode,
+  withUniqueRetry,
+} from "@/lib/nodes";
 import {
   MAX_UPLOAD_SIZE_BYTES,
   UploadLimitExceeded,
@@ -148,42 +154,46 @@ async function handleUpload(
   const mimeType = normalizeMimeType(req.headers.get("content-type"));
 
   try {
-    const node = await prisma.$transaction(async (tx) => {
-      // Verifie le quota de facon atomique (relecture dans la transaction).
-      const u = await tx.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { usedBytes: true, quotaBytes: true },
-      });
-      if (u.usedBytes + actualSize > u.quotaBytes) {
-        throw new QuotaExceeded();
-      }
+    // Rejouee si un upload concurrent a pris le meme nom / cree le meme
+    // dossier entre la verification et l'insertion (P2002 / P2034).
+    const node = await withUniqueRetry(() =>
+      prisma.$transaction(async (tx) => {
+        // Verifie le quota de facon atomique (relecture dans la transaction).
+        const u = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { usedBytes: true, quotaBytes: true },
+        });
+        if (u.usedBytes + actualSize > u.quotaBytes) {
+          throw new QuotaExceeded();
+        }
 
-      // Recree l'arborescence de dossiers (upload de dossier).
-      let parentId = folder.id;
-      for (const folderName of folders) {
-        parentId = await ensureSubfolder(tx, userId, parentId, folderName);
-      }
+        // Recree l'arborescence de dossiers (upload de dossier).
+        let parentId = folder.id;
+        for (const folderName of folders) {
+          parentId = await ensureSubfolder(tx, userId, parentId, folderName);
+        }
 
-      // Nom libre (evite les collisions -> suffixe numerique).
-      const finalName = await freeName(tx, userId, parentId, fileName!);
+        // Nom libre (evite les collisions -> suffixe numerique).
+        const finalName = await freeName(tx, userId, parentId, fileName!);
 
-      const created = await tx.node.create({
-        data: {
-          ownerId: userId,
-          parentId,
-          type: "FILE",
-          name: finalName,
-          size: actualSize,
-          mimeType,
-          storageKey,
-        },
-      });
-      await tx.user.update({
-        where: { id: userId },
-        data: { usedBytes: { increment: actualSize } },
-      });
-      return created;
-    });
+        const created = await tx.node.create({
+          data: {
+            ownerId: userId,
+            parentId,
+            type: "FILE",
+            name: finalName,
+            size: actualSize,
+            mimeType,
+            storageKey,
+          },
+        });
+        await tx.user.update({
+          where: { id: userId },
+          data: { usedBytes: { increment: actualSize } },
+        });
+        return created;
+      })
+    );
 
     return json({ node: toPublicNode(node) }, { status: 201 });
   } catch (e) {
@@ -191,6 +201,9 @@ async function handleUpload(
     await deleteFromDisk(userId, storageKey);
     if (e instanceof QuotaExceeded) {
       return error("Quota de stockage depasse", 413);
+    }
+    if (e instanceof FolderNameConflict) {
+      return error(e.message, 409);
     }
     throw e;
   }
