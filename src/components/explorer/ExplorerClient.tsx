@@ -178,7 +178,10 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
     } else if (canPreview(node)) {
       setPreview(node);
     } else {
-      window.location.href = `/api/nodes/${node.id}/content?download=1`;
+      // Telechargement via un lien ephemere (route d'API, pas une page Next).
+      const a = document.createElement("a");
+      a.href = `/api/nodes/${node.id}/content?download=1`;
+      a.click();
     }
   }
 
