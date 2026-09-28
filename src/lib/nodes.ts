@@ -8,17 +8,9 @@ import type { Prisma } from "@prisma/client";
  * session -> pas d'acces aux ressources d'un autre utilisateur (IDOR).
  */
 
-export type NodeType = "FILE" | "FOLDER";
-
-export interface PublicNode {
-  id: string;
-  name: string;
-  type: NodeType;
-  size: string; // BigInt serialise en string pour le JSON
-  mimeType: string | null;
-  parentId: string | null;
-  updatedAt: string;
-}
+// Types partages avec le client : definis une seule fois dans types.ts.
+import type { NodeType, PublicNode } from "./types";
+export type { NodeType, PublicNode };
 
 export function toPublicNode(n: {
   id: string;
@@ -61,13 +53,58 @@ export async function resolveFolder(
   return node ? { id: node.id } : null;
 }
 
-/** Liste le contenu d'un dossier (parentId null = racine). */
-export async function listChildren(ownerId: string, parentId: string | null) {
+export const PAGE_SIZE = 500;
+
+/**
+ * Liste le contenu d'un dossier (parentId null = racine), par pages de
+ * PAGE_SIZE. `cursor` = id du dernier element de la page precedente ; il
+ * doit appartenir au meme dossier (sinon null : curseur invalide).
+ */
+export async function listChildren(
+  ownerId: string,
+  parentId: string | null,
+  cursor?: string | null
+): Promise<{ children: PublicNode[]; nextCursor: string | null } | null> {
+  if (cursor) {
+    const c = await prisma.node.findFirst({
+      where: { id: cursor, ownerId, parentId },
+      select: { id: true },
+    });
+    if (!c) return null;
+  }
   const rows = await prisma.node.findMany({
     where: { ownerId, parentId },
-    orderBy: [{ type: "desc" }, { name: "asc" }], // dossiers d'abord (FOLDER > FILE)
+    // Dossiers d'abord (FOLDER > FILE), puis nom ; id pour un ordre total.
+    orderBy: [{ type: "desc" }, { name: "asc" }, { id: "asc" }],
+    take: PAGE_SIZE + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
-  return rows.map(toPublicNode);
+  const hasMore = rows.length > PAGE_SIZE;
+  const page = hasMore ? rows.slice(0, PAGE_SIZE) : rows;
+  return {
+    children: page.map(toPublicNode),
+    nextCursor: hasMore ? page[page.length - 1].id : null,
+  };
+}
+
+/**
+ * Ancetres d'un node (lui compris), du plus proche au plus lointain, en une
+ * seule requete (CTE recursive, profondeur bornee par garde-fou).
+ */
+async function ancestors(
+  ownerId: string,
+  nodeId: string
+): Promise<{ id: string; name: string }[]> {
+  return prisma.$queryRaw<{ id: string; name: string }[]>`
+    WITH RECURSIVE anc("id", "name", "parentId", "depth") AS (
+      SELECT "id", "name", "parentId", 0 FROM "Node"
+      WHERE "id" = ${nodeId} AND "ownerId" = ${ownerId}
+      UNION ALL
+      SELECT n."id", n."name", n."parentId", anc."depth" + 1
+      FROM "Node" n JOIN anc ON n."id" = anc."parentId"
+      WHERE n."ownerId" = ${ownerId} AND anc."depth" < 1000
+    )
+    SELECT "id", "name" FROM anc ORDER BY "depth" ASC`;
 }
 
 /** Construit le fil d'ariane de la racine jusqu'au dossier donne. */
@@ -75,19 +112,8 @@ export async function breadcrumb(
   ownerId: string,
   folderId: string | null
 ): Promise<{ id: string; name: string }[]> {
-  const crumbs: { id: string; name: string }[] = [];
-  let current = folderId;
-  // Garde-fou anti-boucle (structure normalement acyclique).
-  for (let i = 0; current && i < 1000; i++) {
-    const node = await prisma.node.findFirst({
-      where: { id: current, ownerId },
-      select: { id: true, name: true, parentId: true },
-    });
-    if (!node) break;
-    crumbs.unshift({ id: node.id, name: node.name });
-    current = node.parentId;
-  }
-  return crumbs;
+  if (!folderId) return [];
+  return (await ancestors(ownerId, folderId)).reverse();
 }
 
 /** Recherche par nom (insensible a la casse) sur tout l'espace de l'utilisateur. */
@@ -165,17 +191,9 @@ export async function wouldCreateCycle(
   nodeId: string,
   targetParentId: string | null
 ): Promise<boolean> {
-  let current = targetParentId;
-  for (let i = 0; current && i < 1000; i++) {
-    if (current === nodeId) return true;
-    const parent = await prisma.node.findFirst({
-      where: { id: current, ownerId },
-      select: { parentId: true },
-    });
-    if (!parent) break;
-    current = parent.parentId;
-  }
-  return false;
+  if (!targetParentId) return false;
+  // Cycle si le node deplace est un ancetre (ou le dossier lui-meme) de la cible.
+  return (await ancestors(ownerId, targetParentId)).some((a) => a.id === nodeId);
 }
 
 /**

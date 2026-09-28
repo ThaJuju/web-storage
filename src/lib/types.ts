@@ -19,4 +19,6 @@ export interface FolderListing {
   folderId: string;
   breadcrumb: Crumb[];
   children: PublicNode[];
+  // Curseur de la page suivante (null : dossier entierement charge).
+  nextCursor: string | null;
 }

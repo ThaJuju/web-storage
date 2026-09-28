@@ -11,7 +11,8 @@ import {
 import { sanitizeName } from "@/lib/validation";
 
 /**
- * GET /api/nodes?folder=<id>   -> contenu d'un dossier + fil d'ariane
+ * GET /api/nodes?folder=<id>[&cursor=<id>] -> contenu d'un dossier (pagine,
+ *                                cf. nextCursor) + fil d'ariane
  * GET /api/nodes?q=<query>     -> recherche par nom
  */
 export async function GET(req: NextRequest) {
@@ -29,11 +30,17 @@ export async function GET(req: NextRequest) {
   const folder = await resolveFolder(user.userId, folderParam);
   if (!folder) return error("Dossier introuvable", 404);
 
-  const [children, crumbs] = await Promise.all([
-    listChildren(user.userId, folder.id),
+  const [page, crumbs] = await Promise.all([
+    listChildren(user.userId, folder.id, searchParams.get("cursor")),
     breadcrumb(user.userId, folder.id),
   ]);
-  return json({ folderId: folder.id ?? "root", breadcrumb: crumbs, children });
+  if (!page) return error("Curseur invalide", 400);
+  return json({
+    folderId: folder.id ?? "root",
+    breadcrumb: crumbs,
+    children: page.children,
+    nextCursor: page.nextCursor,
+  });
 }
 
 /**

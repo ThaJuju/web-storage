@@ -56,15 +56,12 @@ export async function GET(
     "X-Content-Type-Options": "nosniff",
   };
 
+  // RFC 9110 §14.2 : un serveur PEUT ignorer Range. On ne gere qu'une plage
+  // unique "bytes=a-b" ; multi-plages, syntaxe inconnue ou fichier vide ->
+  // Range ignore, reponse 200 complete (plus robuste qu'un 416).
   const range = req.headers.get("range");
-  if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-    if (!match) {
-      return new Response("Range invalide", {
-        status: 416,
-        headers: { "Content-Range": `bytes */${total}` },
-      });
-    }
+  const match = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (match && (match[1] || match[2]) && total > 0) {
     let start = match[1] ? parseInt(match[1], 10) : 0;
     let end = match[2] ? parseInt(match[2], 10) : total - 1;
 

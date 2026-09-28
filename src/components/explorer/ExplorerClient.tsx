@@ -12,6 +12,7 @@ import { UploadTray } from "./UploadTray";
 import { PreviewModal } from "@/components/preview/PreviewModal";
 import { canPreview } from "@/components/preview/registry";
 import { Modal } from "@/components/Modal";
+import { useToast } from "@/components/useToast";
 import { MoveModal } from "./MoveModal";
 
 // Ouverture au clic simple UNIQUEMENT si : activation clavier (Enter/Espace,
@@ -49,15 +50,10 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
     y: number;
   } | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const { toast, showToast } = useToast();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
-
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2500);
-  }, []);
 
   // Changement de dossier : on repasse en chargement (ajustement pendant le
   // rendu plutot que dans un effet).
@@ -91,6 +87,26 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
     load();
   }, [load]);
 
+  // Pagination : les gros dossiers sont charges par pages (cf. API).
+  const [loadingMore, setLoadingMore] = useState(false);
+  async function loadMore() {
+    if (!listing?.nextCursor) return;
+    setLoadingMore(true);
+    const { data } = await fetchJson<FolderListing>(
+      `/api/nodes?folder=${folderId}&cursor=${encodeURIComponent(listing.nextCursor)}`
+    );
+    setLoadingMore(false);
+    if (!data) {
+      showToast("Erreur de chargement.");
+      return;
+    }
+    setListing((prev) =>
+      prev
+        ? { ...prev, children: [...prev.children, ...data.children], nextCursor: data.nextCursor }
+        : data
+    );
+  }
+
   const onEachUploadDone = useCallback(() => {
     load();
     refreshUsage();
@@ -99,76 +115,107 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
   const uploader = useUploader(onEachUploadDone);
 
   // --- Recherche (debounce) ---
+  // searchVersion force une nouvelle recherche apres une modification
+  // (renommage, deplacement, suppression) faite depuis les resultats.
+  const [searchVersion, setSearchVersion] = useState(0);
   useEffect(() => {
     const q = search.trim();
     if (!q) return;
-    const t = setTimeout(async () => {
-      const res = await fetch(`/api/nodes?q=${encodeURIComponent(q)}`, {
+    // Annule la requete precedente : une reponse lente ne peut plus ecraser
+    // les resultats d'une saisie plus recente.
+    const ctrl = new AbortController();
+    const t = setTimeout(() => {
+      fetch(`/api/nodes?q=${encodeURIComponent(q)}`, {
         cache: "no-store",
-      });
-      if (res.ok) setSearchResults((await res.json()).results);
+        signal: ctrl.signal,
+      })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error())))
+        .then((d: { results: PublicNode[] }) => setSearchResults(d.results))
+        .catch((e: unknown) => {
+          if ((e as Error)?.name !== "AbortError") {
+            showToast("Recherche impossible (erreur réseau).");
+          }
+        });
     }, 250);
-    return () => clearTimeout(t);
-  }, [search]);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [search, searchVersion, showToast]);
+
+  // Recharge le dossier et, si une recherche est affichee, ses resultats.
+  function refreshViews() {
+    load();
+    if (search.trim()) setSearchVersion((v) => v + 1);
+  }
 
   // --- Actions ---
+  // Requete mutante qui ne leve jamais : erreur reseau -> message.
+  async function send(
+    url: string,
+    init: RequestInit
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok) return { ok: true };
+      const d = await res.json().catch(() => ({}));
+      return { ok: false, error: d.error };
+    } catch {
+      return { ok: false, error: "Erreur réseau." };
+    }
+  }
+
+  const jsonInit = (method: string, body: unknown): RequestInit => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
   async function createFolder(name: string) {
-    const res = await fetch("/api/nodes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parentId: folderId, name }),
-    });
-    if (res.ok) {
+    const r = await send("/api/nodes", jsonInit("POST", { parentId: folderId, name }));
+    if (r.ok) {
       setNewFolderOpen(false);
       load();
       showToast("Dossier créé");
     } else {
-      const d = await res.json().catch(() => ({}));
-      showToast(d.error ?? "Échec de la création");
+      showToast(r.error ?? "Échec de la création");
     }
   }
 
   async function rename(node: PublicNode, name: string) {
-    const res = await fetch(`/api/nodes/${node.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
+    const r = await send(`/api/nodes/${node.id}`, jsonInit("PATCH", { name }));
+    if (r.ok) {
       setRenameTarget(null);
-      load();
+      refreshViews();
       showToast("Renommé");
     } else {
-      const d = await res.json().catch(() => ({}));
-      showToast(d.error ?? "Échec du renommage");
+      showToast(r.error ?? "Échec du renommage");
     }
   }
 
   async function move(node: PublicNode, targetFolderId: string) {
-    const res = await fetch(`/api/nodes/${node.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parentId: targetFolderId }),
-    });
-    if (res.ok) {
+    const r = await send(
+      `/api/nodes/${node.id}`,
+      jsonInit("PATCH", { parentId: targetFolderId })
+    );
+    if (r.ok) {
       setMoveTarget(null);
-      load();
+      refreshViews();
       showToast("Déplacé");
     } else {
-      const d = await res.json().catch(() => ({}));
-      showToast(d.error ?? "Échec du déplacement");
+      showToast(r.error ?? "Échec du déplacement");
     }
   }
 
   async function remove(node: PublicNode) {
-    const res = await fetch(`/api/nodes/${node.id}`, { method: "DELETE" });
-    if (res.ok) {
+    const r = await send(`/api/nodes/${node.id}`, { method: "DELETE" });
+    if (r.ok) {
       setDeleteTarget(null);
-      load();
+      refreshViews();
       refreshUsage();
       showToast("Supprimé");
     } else {
-      showToast("Échec de la suppression");
+      showToast(r.error ?? "Échec de la suppression");
     }
   }
 
@@ -365,6 +412,17 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
             onDelete={setDeleteTarget}
             onContextMenu={openContextMenu}
           />
+        )}
+        {!loading && !error && !isSearching && listing?.nextCursor && (
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800/60 disabled:opacity-50"
+            >
+              {loadingMore ? "Chargement…" : "Afficher plus d'éléments"}
+            </button>
+          </div>
         )}
       </div>
 

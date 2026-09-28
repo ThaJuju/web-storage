@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchJson } from "@/lib/fetch-json";
 import { Modal } from "@/components/Modal";
+import { useToast } from "@/components/useToast";
 import { formatBytes, formatDate } from "@/lib/format";
 
 interface UserRow {
@@ -30,12 +31,7 @@ export function AdminUsersClient() {
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [manage, setManage] = useState<UserRow | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-
-  const showToast = useCallback((m: string) => {
-    setToast(m);
-    setTimeout(() => setToast(null), 2800);
-  }, []);
+  const { toast, showToast } = useToast(2800);
 
   // setState uniquement dans le callback .then() : jamais synchrone dans l'effet.
   const load = useCallback(
