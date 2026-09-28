@@ -3,14 +3,9 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { createSession } from "@/lib/session";
 import { error, json, checkOrigin } from "@/lib/api";
-import { getLoginLockout, rateLimit } from "@/lib/rate-limit";
+import { getLoginLockout, rateLimit, recordLogin } from "@/lib/rate-limit";
 import { isValidEmail } from "@/lib/validation";
-
-function clientIp(req: NextRequest): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  if (fwd) return fwd.split(",")[0].trim();
-  return req.headers.get("x-real-ip") ?? "unknown";
-}
+import { clientIp } from "@/lib/client-ip";
 
 export async function POST(req: NextRequest) {
   // Anti-CSRF : origine obligatoire sur cette mutation.
@@ -66,9 +61,7 @@ export async function POST(req: NextRequest) {
   const ok = await bcrypt.compare(password, user?.passwordHash ?? dummyHash);
 
   if (!user || !ok) {
-    await prisma.loginLog.create({
-      data: { userId: user?.id ?? null, email, ip, success: false },
-    });
+    await recordLogin({ userId: user?.id ?? null, email, ip, success: false });
     return error("Identifiants invalides", 401);
   }
 
@@ -81,9 +74,7 @@ export async function POST(req: NextRequest) {
     }
     const { verifyTotp } = await import("@/lib/totp");
     if (!verifyTotp(user.totpSecret, totp)) {
-      await prisma.loginLog.create({
-        data: { userId: user.id, email, ip, success: false },
-      });
+      await recordLogin({ userId: user.id, email, ip, success: false });
       return error("Code de verification invalide", 401);
     }
   }
@@ -91,9 +82,7 @@ export async function POST(req: NextRequest) {
   // Succes : ouverture d'une session serveur (le cookie ne porte que son id).
   await createSession(user.id);
 
-  await prisma.loginLog.create({
-    data: { userId: user.id, email, ip, success: true },
-  });
+  await recordLogin({ userId: user.id, email, ip, success: true });
 
   return json({ ok: true, isAdmin: user.isAdmin });
 }

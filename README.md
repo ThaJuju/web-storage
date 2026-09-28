@@ -102,7 +102,9 @@ storage/   fichiers binaires (gitignored)
   progressif (1 → 2 → 4 → 8 min, plafonné à 30 min). Réponse identique que le
   compte existe ou non, comparaison bcrypt même sur compte inexistant
   (anti-énumération / timing).
-- **Rate limiting** (token bucket en mémoire) sur login et upload.
+- **Rate limiting** (token bucket en mémoire, borné à 10 000 clés) sur le
+  login, par IP réelle du client (voir `TRUST_PROXY`).
+- **Journal des connexions** conservé 90 jours.
 - **Sessions côté serveur** : le cookie chiffré ne contient qu'un
   identifiant aléatoire ; utilisateur et rôle sont relus en base à chaque
   requête. Déconnexion, changement de mot de passe, réinitialisation 2FA,
@@ -153,6 +155,8 @@ Variables du `.env` :
 | `SESSION_SECRET` | secret de chiffrement des cookies (**obligatoire, ≥ 32 car.**) |
 | `STORAGE_DIR` | dossier de stockage des fichiers (défaut `./storage`) |
 | `MAX_UPLOAD_SIZE_BYTES` | taille max d'un fichier (défaut 4 Go) |
+| `APP_HTTPS` | `true` si l'app est servie en HTTPS (cookie `secure`, HSTS…) |
+| `TRUST_PROXY` | `true` **uniquement** derrière un reverse-proxy de confiance (voir ci-dessous) |
 
 ```bash
 # 3. Base de données (crée le schéma)
@@ -167,8 +171,22 @@ npm run dev            # développement  -> http://localhost:3000
 npm run build && npm run start   # production
 ```
 
-> Le port par défaut est 3000. Pour en changer : `npx next start -p 3300`
+> Le port par défaut est 3000. Pour en changer : `PORT=3300 npm start`
 > (ou `PORT=3300 npm run dev`).
+
+`npm start` / `npm run dev` lancent `server.mjs`, un mince serveur HTTP
+autour de Next.js : c'est lui qui détermine l'**IP du client** à partir de
+la socket (rate-limit, blocage anti brute-force, journal des connexions).
+Ne pas lancer `next start` directement : l'IP serait alors inconnue.
+
+- **Accès direct** (`TRUST_PROXY=false`, défaut) : l'adresse de la socket
+  est utilisée ; `X-Forwarded-For` / `X-Real-IP` envoyés par le client sont
+  ignorés.
+- **Derrière un reverse-proxy** (nginx, Caddy…) : mettre `TRUST_PROXY=true`
+  ; l'app prend la **dernière** entrée de `X-Forwarded-For`, celle ajoutée
+  par le proxy (nginx : `proxy_set_header X-Forwarded-For
+  $proxy_add_x_forwarded_for;`). Le port de l'app ne doit alors plus être
+  joignable directement.
 
 ---
 

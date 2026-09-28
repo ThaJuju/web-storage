@@ -4,28 +4,93 @@ import { prisma } from "./db";
  * Token bucket en memoire pour un rate limiting simple par cle (ip:route).
  * Suffisant en mono-instance ; a remplacer par Redis en multi-instance.
  */
-type Bucket = { tokens: number; updatedAt: number };
+type Bucket = {
+  tokens: number;
+  updatedAt: number;
+  capacity: number;
+  refillPerSec: number;
+};
 const buckets = new Map<string, Bucket>();
+
+// Borne memoire : au-dela, les buckets les moins recemment utilises sont
+// evinces (Map = ordre d'insertion, on reinsere a chaque acces -> LRU).
+const MAX_BUCKETS = 10_000;
+const SWEEP_INTERVAL_MS = 60 * 1000;
+let lastSweep = 0;
+
+/** Retire les buckets redevenus pleins : ils equivalent a une absence d'entree. */
+function sweep(now: number) {
+  if (now - lastSweep < SWEEP_INTERVAL_MS) return;
+  lastSweep = now;
+  for (const [key, b] of buckets) {
+    const elapsed = (now - b.updatedAt) / 1000;
+    if (b.tokens + elapsed * b.refillPerSec >= b.capacity) buckets.delete(key);
+  }
+}
 
 export function rateLimit(
   key: string,
   { capacity, refillPerSec }: { capacity: number; refillPerSec: number }
 ): { allowed: boolean; retryAfterSec: number } {
   const now = Date.now();
-  const b = buckets.get(key) ?? { tokens: capacity, updatedAt: now };
+  sweep(now);
+
+  const b = buckets.get(key) ?? {
+    tokens: capacity,
+    updatedAt: now,
+    capacity,
+    refillPerSec,
+  };
   const elapsed = (now - b.updatedAt) / 1000;
   b.tokens = Math.min(capacity, b.tokens + elapsed * refillPerSec);
   b.updatedAt = now;
 
+  buckets.delete(key);
+  buckets.set(key, b);
+  while (buckets.size > MAX_BUCKETS) {
+    buckets.delete(buckets.keys().next().value!);
+  }
+
   if (b.tokens < 1) {
-    buckets.set(key, b);
     const retryAfterSec = Math.ceil((1 - b.tokens) / refillPerSec);
     return { allowed: false, retryAfterSec };
   }
 
   b.tokens -= 1;
-  buckets.set(key, b);
   return { allowed: true, retryAfterSec: 0 };
+}
+
+/** Taille courante (tests / diagnostic). */
+export function rateLimitBucketCount(): number {
+  return buckets.size;
+}
+
+// --- Journal des connexions ------------------------------------------------
+
+const LOGIN_LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const LOGIN_LOG_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+let lastLogPurge = 0;
+
+/**
+ * Ecrit une ligne du journal des connexions (email tronque a 320 car.) et
+ * purge, au plus une fois par heure, les lignes de plus de 90 jours.
+ */
+export async function recordLogin(data: {
+  userId: string | null;
+  email: string;
+  ip: string;
+  success: boolean;
+}): Promise<void> {
+  await prisma.loginLog.create({
+    data: { ...data, email: data.email.slice(0, 320), ip: data.ip.slice(0, 64) },
+  });
+  const now = Date.now();
+  if (now - lastLogPurge > LOGIN_LOG_PURGE_INTERVAL_MS) {
+    lastLogPurge = now;
+    await prisma.loginLog.deleteMany({
+      where: { createdAt: { lt: new Date(now - LOGIN_LOG_RETENTION_MS) } },
+    });
+  }
 }
 
 // --- Anti brute-force sur le login (persiste, delai progressif) -------------
