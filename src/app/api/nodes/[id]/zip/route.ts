@@ -4,6 +4,7 @@ import { PassThrough, Readable } from "node:stream";
 import { prisma } from "@/lib/db";
 import { getAuthenticatedUser } from "@/lib/session";
 import { diskPath } from "@/lib/storage";
+import { USER_CONTENT_CSP } from "@/lib/mime";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -71,6 +72,8 @@ export async function GET(
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename*=UTF-8''${zipName}`,
         "Cache-Control": "private, no-store",
+        "Content-Security-Policy": USER_CONTENT_CSP,
+        "X-Content-Type-Options": "nosniff",
       },
     }
   );

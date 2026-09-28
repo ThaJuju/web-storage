@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { prisma } from "@/lib/db";
 import { getAuthenticatedUser } from "@/lib/session";
 import { diskPath, fileSizeOnDisk } from "@/lib/storage";
+import { USER_CONTENT_CSP, servingPolicy } from "@/lib/mime";
 
 export const runtime = "nodejs";
 
@@ -37,16 +38,22 @@ export async function GET(
   const total = Number(totalSize);
   const path = diskPath(user.userId, node.storageKey);
 
-  const contentType = node.mimeType || "application/octet-stream";
-  const download = new URL(req.url).searchParams.get("download") === "1";
+  // Le type stocke vient du client : on ne sert inline que des types surs
+  // (voir servingPolicy), sinon texte brut ou telechargement force.
+  const policy = servingPolicy(node.mimeType);
+  const download =
+    policy.forceAttachment ||
+    new URL(req.url).searchParams.get("download") === "1";
   const disposition = download ? "attachment" : "inline";
   const asciiName = encodeURIComponent(node.name);
 
   const baseHeaders: Record<string, string> = {
-    "Content-Type": contentType,
+    "Content-Type": policy.contentType,
     "Accept-Ranges": "bytes",
     "Content-Disposition": `${disposition}; filename*=UTF-8''${asciiName}`,
     "Cache-Control": "private, no-store",
+    "Content-Security-Policy": USER_CONTENT_CSP,
+    "X-Content-Type-Options": "nosniff",
   };
 
   const range = req.headers.get("range");

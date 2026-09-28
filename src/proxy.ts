@@ -43,27 +43,35 @@ export function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // --- CSP ---
-  // Note : on n'utilise PAS de nonce + strict-dynamic. Next.js ne peut injecter
-  // un nonce que dans les pages rendues dynamiquement ; les pages statiques
-  // (ex: /login) recevraient alors des <script> sans nonce -> tous bloques ->
-  // React ne s'hydrate pas. On retient donc 'unsafe-inline' pour les scripts,
-  // compromis acceptable ici : tout le contenu est echappe par React (surface
-  // XSS minime), les gros scripts sont des chunks 'self'.
   const isDev = process.env.NODE_ENV !== "production";
-  const scriptSrc = isDev
-    ? `'self' 'unsafe-inline' 'unsafe-eval'`
-    : `'self' 'unsafe-inline'`;
-
   // upgrade-insecure-requests forcerait le navigateur a passer en HTTPS : a
   // n'activer que si l'app est reellement servie en TLS (sinon erreur SSL en
   // acces HTTP). Piloté par APP_HTTPS.
   const isHttps = process.env.APP_HTTPS === "true";
 
+  // Routes d'API : du JSON ou des fichiers, jamais de HTML de l'application.
+  // Les routes qui servent du contenu utilisateur (content, zip) posent leur
+  // propre CSP "sandbox" ; on ne l'ecrase pas.
+  if (pathname.startsWith("/api/")) {
+    const res = NextResponse.next();
+    setCommonHeaders(res);
+    return res;
+  }
+
+  // --- CSP a nonce ---
+  // Nonce aleatoire par requete : Next.js l'extrait de l'en-tete CSP de la
+  // requete et l'applique a ses propres scripts. Les pages doivent donc etre
+  // rendues dynamiquement (cf. connection() dans app/layout.tsx). Plus de
+  // 'unsafe-inline' pour les scripts : un script injecte sans le nonce est
+  // bloque. Les styles gardent 'unsafe-inline' (attributs style= de React).
+  const nonce = btoa(crypto.randomUUID());
+  const scriptSrc = `'self' 'nonce-${nonce}' 'strict-dynamic'${
+    isDev ? " 'unsafe-eval'" : ""
+  }`;
+
   const csp = [
     `default-src 'self'`,
     `script-src ${scriptSrc}`,
-    // Next injecte des styles inline ; 'unsafe-inline' est acceptable pour les styles.
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob:`,
     `media-src 'self'`,
@@ -76,8 +84,17 @@ export function proxy(req: NextRequest) {
     ...(isHttps ? ["upgrade-insecure-requests"] : []),
   ].join("; ");
 
-  const res = NextResponse.next();
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
+
+  const res = NextResponse.next({ request: { headers: requestHeaders } });
   res.headers.set("Content-Security-Policy", csp);
+  setCommonHeaders(res);
+  return res;
+}
+
+function setCommonHeaders(res: NextResponse) {
   res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "no-referrer");
@@ -86,7 +103,6 @@ export function proxy(req: NextRequest) {
     "Permissions-Policy",
     "camera=(), microphone=(), geolocation=()"
   );
-  return res;
 }
 
 export const config = {

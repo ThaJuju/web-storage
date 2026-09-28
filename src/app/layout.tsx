@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 
@@ -20,11 +21,14 @@ export const viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Rendu dynamique obligatoire : le nonce CSP (pose par le proxy) change a
+  // chaque requete et doit etre injecte dans les scripts de Next.js.
+  await connection();
   return (
     <html lang="fr" className={`${jakarta.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">

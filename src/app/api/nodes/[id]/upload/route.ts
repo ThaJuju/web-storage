@@ -9,6 +9,7 @@ import {
   writeStreamToDisk,
 } from "@/lib/storage";
 import { sanitizeName, sanitizeRelativePath } from "@/lib/validation";
+import { normalizeMimeType } from "@/lib/mime";
 
 // On veut le runtime Node (streams fichiers, pas Edge).
 export const runtime = "nodejs";
@@ -82,7 +83,8 @@ export async function POST(
     return error("Fichier incomplet : taille recue differente de la taille annoncee", 400);
   }
 
-  const mimeType = req.headers.get("content-type") || null;
+  // Valide/normalise le type annonce (il ne sert jamais tel quel au rendu).
+  const mimeType = normalizeMimeType(req.headers.get("content-type"));
 
   try {
     const node = await prisma.$transaction(async (tx) => {
