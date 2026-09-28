@@ -60,7 +60,10 @@ async function main() {
 
   const passwordHash = await bcrypt.hash(pw1, 12);
   await prisma.user.update({ where: { email }, data: { passwordHash } });
-  console.log(`\n✅ Mot de passe mis a jour pour ${email}.\n`);
+  // Coupe toutes les sessions ouvertes avec l'ancien mot de passe.
+  const { count } = await prisma.session.deleteMany({ where: { userId: user.id } });
+  console.log(`\n✅ Mot de passe mis a jour pour ${email}.`);
+  console.log(`   ${count} session(s) ouverte(s) revoquee(s).\n`);
 }
 
 main()

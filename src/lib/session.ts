@@ -1,17 +1,26 @@
 import { getIronSession, type SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
+import { createHash, randomBytes } from "node:crypto";
+import { prisma } from "./db";
 
+/**
+ * Sessions cote serveur. Le cookie iron-session (chiffre + signe) ne contient
+ * qu'un identifiant aleatoire ; l'etat (utilisateur, derniere activite,
+ * expiration) vit en base dans la table Session. On ne fait donc JAMAIS
+ * confiance au cookie pour le role ou l'existence du compte : tout est relu
+ * en base a chaque requete, et supprimer une ligne Session revoque
+ * immediatement la session correspondante.
+ */
 export interface SessionData {
-  userId?: string;
-  isAdmin?: boolean;
-  // timestamp (ms) de la derniere activite — sert au timeout d'inactivite
-  lastSeen?: number;
-  // etape de connexion : true quand le mot de passe est valide mais la 2FA pas encore fournie
-  pendingTwoFactor?: boolean;
+  sid?: string;
 }
 
 // Deconnexion automatique apres 30 min d'inactivite (TTL glissant).
 export const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+// Duree de vie absolue d'une session, meme utilisee en continu.
+export const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// lastSeenAt n'est reecrit qu'au plus une fois par minute (limite les writes).
+const LAST_SEEN_THROTTLE_MS = 60 * 1000;
 
 const secret = process.env.SESSION_SECRET;
 if (!secret || secret.length < 32) {
@@ -33,8 +42,9 @@ export const sessionOptions: SessionOptions = {
     secure: isHttps,
     sameSite: "strict",
     path: "/",
-    // La duree de vie effective est geree cote serveur via lastSeen (TTL glissant).
-    maxAge: INACTIVITY_TIMEOUT_MS / 1000,
+    // L'inactivite est geree cote serveur (lastSeenAt) ; le cookie vit au
+    // plus aussi longtemps que la session absolue.
+    maxAge: SESSION_MAX_AGE_MS / 1000,
   },
 };
 
@@ -43,39 +53,98 @@ export async function getSession() {
   return getIronSession<SessionData>(cookieStore, sessionOptions);
 }
 
+function hashSid(sid: string): string {
+  return createHash("sha256").update(sid).digest("hex");
+}
+
+/**
+ * Ouvre une nouvelle session pour l'utilisateur et pose le cookie. Purge au
+ * passage les sessions expirees (toutes utilisateurs confondus).
+ */
+export async function createSession(userId: string): Promise<void> {
+  const now = Date.now();
+  await prisma.session.deleteMany({
+    where: {
+      OR: [
+        { expiresAt: { lt: new Date(now) } },
+        { lastSeenAt: { lt: new Date(now - INACTIVITY_TIMEOUT_MS) } },
+      ],
+    },
+  });
+
+  const sid = randomBytes(32).toString("base64url");
+  await prisma.session.create({
+    data: {
+      id: hashSid(sid),
+      userId,
+      expiresAt: new Date(now + SESSION_MAX_AGE_MS),
+    },
+  });
+
+  const session = await getSession();
+  session.sid = sid;
+  await session.save();
+}
+
+/** Supprime la session courante (base + cookie). */
+export async function destroyCurrentSession(): Promise<void> {
+  const session = await getSession();
+  if (session.sid) {
+    await prisma.session.deleteMany({ where: { id: hashSid(session.sid) } });
+  }
+  session.destroy();
+}
+
+/**
+ * Revoque toutes les sessions d'un utilisateur (changement de mot de passe,
+ * reinitialisation 2FA, "deconnecter partout"...).
+ */
+export async function revokeUserSessions(userId: string): Promise<void> {
+  await prisma.session.deleteMany({ where: { userId } });
+}
+
 /**
  * Renvoie l'utilisateur authentifie, ou null si :
- * - pas de session,
- * - 2FA en attente,
- * - inactivite depassee (la session est alors detruite).
- * Met a jour lastSeen (TTL glissant) a chaque acces valide.
+ * - pas de cookie / cookie invalide,
+ * - session inconnue en base (revoquee, compte supprime...),
+ * - inactivite depassee ou duree de vie absolue atteinte.
+ * Le role admin est relu en base a chaque appel.
  */
 export async function getAuthenticatedUser(): Promise<{
   userId: string;
   isAdmin: boolean;
 } | null> {
   const session = await getSession();
-  if (!session.userId || session.pendingTwoFactor) return null;
+  if (!session.sid) return null;
+
+  const id = hashSid(session.sid);
+  const row = await prisma.session.findUnique({
+    where: { id },
+    select: {
+      lastSeenAt: true,
+      expiresAt: true,
+      user: { select: { id: true, isAdmin: true } },
+    },
+  });
+  if (!row) return null;
 
   const now = Date.now();
-  if (session.lastSeen && now - session.lastSeen > INACTIVITY_TIMEOUT_MS) {
-    try {
-      session.destroy();
-    } catch {
-      // Server Component : ecriture cookie interdite. La session sera de toute
-      // facon rejetee ici (retour null) et nettoyee au prochain Route Handler.
-    }
+  if (
+    row.expiresAt.getTime() <= now ||
+    now - row.lastSeenAt.getTime() > INACTIVITY_TIMEOUT_MS
+  ) {
+    await prisma.session.deleteMany({ where: { id } });
     return null;
   }
 
-  // Rafraichit le TTL glissant. Interdit d'ecrire un cookie pendant le rendu
-  // d'un Server Component -> best-effort : les appels API (Route Handlers) du
-  // client rafraichissent lastSeen en continu, donc le TTL reste correct.
-  session.lastSeen = now;
-  try {
-    await session.save();
-  } catch {
-    // Contexte Server Component : on ignore, la lecture reste valide.
+  // TTL glissant cote serveur : fonctionne aussi depuis un Server Component
+  // (aucune ecriture de cookie necessaire).
+  if (now - row.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS) {
+    await prisma.session.updateMany({
+      where: { id },
+      data: { lastSeenAt: new Date(now) },
+    });
   }
-  return { userId: session.userId, isAdmin: !!session.isAdmin };
+
+  return { userId: row.user.id, isAdmin: row.user.isAdmin };
 }

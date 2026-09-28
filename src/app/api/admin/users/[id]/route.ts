@@ -3,13 +3,16 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { error, json, requireAdmin, isResponse } from "@/lib/api";
 import { deleteUserStorage } from "@/lib/storage";
+import { revokeUserSessions } from "@/lib/session";
 import { parseQuota } from "@/lib/validation";
 
 const MIN_PASSWORD_LENGTH = 10;
 
 /**
  * PATCH /api/admin/users/[id]
- * body: { password?, quotaGb?, isAdmin?, disableTwoFactor? }
+ * body: { password?, quotaGb?, isAdmin?, disableTwoFactor?, revokeSessions? }
+ * Un changement de mot de passe ou une reinitialisation 2FA coupe toutes les
+ * sessions ouvertes du compte ; revokeSessions le fait sans autre changement.
  */
 export async function PATCH(
   req: NextRequest,
@@ -83,7 +86,12 @@ export async function PATCH(
     data.totpSecret = null;
   }
 
-  if (Object.keys(data).length === 0) {
+  const revoke =
+    b.revokeSessions === true ||
+    data.passwordHash !== undefined ||
+    data.totpSecret !== undefined;
+
+  if (Object.keys(data).length === 0 && !revoke) {
     return error("Aucune modification fournie", 400);
   }
 
@@ -92,6 +100,7 @@ export async function PATCH(
     data,
     select: { id: true, email: true, isAdmin: true },
   });
+  if (revoke) await revokeUserSessions(id);
   return json({ user: updated });
 }
 

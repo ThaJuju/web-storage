@@ -1,7 +1,7 @@
 import { type NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
-import { getSession } from "@/lib/session";
+import { createSession } from "@/lib/session";
 import { error, json, checkOrigin } from "@/lib/api";
 import { getLoginLockout, rateLimit } from "@/lib/rate-limit";
 import { isValidEmail } from "@/lib/validation";
@@ -88,13 +88,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Succes : ouverture de session.
-  const session = await getSession();
-  session.userId = user.id;
-  session.isAdmin = user.isAdmin;
-  session.lastSeen = Date.now();
-  session.pendingTwoFactor = false;
-  await session.save();
+  // Succes : ouverture d'une session serveur (le cookie ne porte que son id).
+  await createSession(user.id);
 
   await prisma.loginLog.create({
     data: { userId: user.id, email, ip, success: true },

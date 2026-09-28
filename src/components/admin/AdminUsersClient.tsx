@@ -492,6 +492,10 @@ function ManageUserModal({
               </button>
             </div>
           </Field>
+          <p className="text-xs text-slate-500">
+            Changer le mot de passe déconnecte toutes les sessions ouvertes de
+            ce compte.
+          </p>
         </div>
 
         {/* 2FA */}
@@ -512,6 +516,25 @@ function ManageUserModal({
             </button>
           </div>
         )}
+
+        {/* Sessions */}
+        <div>
+          <button
+            onClick={() =>
+              patch(
+                { revokeSessions: true },
+                "sessions",
+                user.isSelf
+                  ? "Sessions déconnectées (y compris celle-ci)"
+                  : "Sessions déconnectées"
+              )
+            }
+            disabled={busy !== null}
+            className="text-sm font-medium text-amber-400 hover:text-amber-300 disabled:opacity-50"
+          >
+            Déconnecter toutes les sessions de ce compte
+          </button>
+        </div>
 
         <div className="border-t border-slate-800" />
 

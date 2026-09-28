@@ -49,6 +49,9 @@ Node      id, ownerId, parentId (null = racine), type ("FILE"|"FOLDER"),
           @@unique([ownerId, parentId, name])   // pas de doublon dans un dossier
 
 LoginLog  id, userId, email, ip, success, createdAt   // journal des connexions
+
+Session   id (sha256 de l'identifiant du cookie), userId,
+          createdAt, lastSeenAt, expiresAt              // sessions serveur
 ```
 
 Fichiers et dossiers partagent la table `Node` (arbre par `parentId`) : le
@@ -100,6 +103,12 @@ storage/   fichiers binaires (gitignored)
   compte existe ou non, comparaison bcrypt même sur compte inexistant
   (anti-énumération / timing).
 - **Rate limiting** (token bucket en mémoire) sur login et upload.
+- **Sessions côté serveur** : le cookie chiffré ne contient qu'un
+  identifiant aléatoire ; utilisateur et rôle sont relus en base à chaque
+  requête. Déconnexion, changement de mot de passe, réinitialisation 2FA,
+  suppression du compte ou « déconnecter toutes les sessions » (admin)
+  révoquent immédiatement les sessions concernées. Durée de vie absolue :
+  12 h.
 - **Déconnexion automatique** après 30 min d'inactivité (TTL glissant côté
   serveur + minuteur côté client).
 - **En-têtes** : CSP à nonce (`default-src 'self'`, `media-src 'self'`…),

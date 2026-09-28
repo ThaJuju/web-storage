@@ -19,6 +19,7 @@ model User {
   createdAt    DateTime   @default(now())
   nodes        Node[]
   loginLogs    LoginLog[]
+  sessions     Session[]
 }
 
 model Node {
@@ -54,4 +55,20 @@ model LoginLog {
 
   @@index([email, createdAt])
   @@index([ip, createdAt])
+}
+
+// Session cote serveur : le cookie (chiffre) ne contient que l'identifiant
+// aleatoire ; on n'en stocke que le hash SHA-256. Supprimer la ligne revoque
+// immediatement la session (deconnexion, changement de mot de passe...).
+model Session {
+  id         String   @id // sha256(identifiant du cookie), hex
+  userId     String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime // duree de vie absolue
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
