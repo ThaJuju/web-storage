@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { SESSION_EXPIRED_PATH, getAuthenticatedUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { formatDate } from "@/lib/format";
+import { getTargetedAccounts } from "@/lib/rate-limit";
 
 /** Journal des connexions, reserve a l'admin (rendu cote serveur). */
 export default async function LoginsPage() {
@@ -9,10 +10,13 @@ export default async function LoginsPage() {
   if (!user) redirect(SESSION_EXPIRED_PATH);
   if (!user.isAdmin) redirect("/folder/root");
 
-  const logs = await prisma.loginLog.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 200,
-  });
+  const [logs, targeted] = await Promise.all([
+    prisma.loginLog.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
+    getTargetedAccounts(),
+  ]);
 
   return (
     <div className="px-6 py-6">
@@ -22,6 +26,37 @@ export default async function LoginsPage() {
       <p className="mb-6 text-sm text-slate-400">
         200 derniers événements d&apos;authentification.
       </p>
+
+      {targeted.length > 0 && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4"
+        >
+          <p className="mb-2 text-sm font-semibold text-amber-300">
+            Comptes ciblés par des échecs de connexion (24 dernières heures)
+          </p>
+          <p className="mb-3 text-xs text-amber-200/70">
+            Les tentatives sont bloquées par IP et ralenties sur le compte ; le
+            propriétaire peut toujours se connecter. Activer la 2FA sur ces
+            comptes est recommandé.
+          </p>
+          <ul className="space-y-1 text-sm text-amber-100">
+            {targeted.map((t) => (
+              <li key={t.email}>
+                <span className="font-medium">{t.email}</span> —{" "}
+                {t.failures} échec{t.failures > 1 ? "s" : ""} depuis{" "}
+                {t.distinctIps} IP
+                {t.lastAttempt && (
+                  <span className="text-amber-200/70">
+                    {" "}
+                    (dernier : {formatDate(t.lastAttempt.toISOString())})
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
         <table className="w-full text-sm">

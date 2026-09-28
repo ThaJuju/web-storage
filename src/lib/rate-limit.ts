@@ -94,51 +94,113 @@ export async function recordLogin(data: {
 }
 
 // --- Anti brute-force sur le login (persiste, delai progressif) -------------
+//
+// Le blocage ne porte JAMAIS sur l'e-mail seul : sinon n'importe qui
+// connaissant l'adresse d'un compte pourrait en bloquer le proprietaire
+// indefiniment (deni de service). On bloque :
+//  - le couple (email, ip)  : 5 echecs -> 1, 2, 4... min (plafond 30 min) ;
+//  - l'ip seule (spraying)  : 20 echecs tous comptes confondus -> idem.
+// Un e-mail vise depuis de nombreuses IP n'est que RALENTI (delai artificiel
+// sur chaque tentative), ce qui laisse le vrai proprietaire se connecter.
 
-const MAX_FAILURES = 5;
 const FAILURE_WINDOW_MS = 15 * 60 * 1000; // fenetre d'observation des echecs
+const PAIR_MAX_FAILURES = 5;
+const IP_MAX_FAILURES = 20;
+// Seuil a partir duquel un compte est considere "sous attaque".
+export const ACCOUNT_ATTACK_THRESHOLD = 10;
+const ATTACK_SLOWDOWN_MS = 2000;
+
+function progressiveLock(
+  failures: { createdAt: Date }[],
+  threshold: number
+): number {
+  if (failures.length < threshold) return 0;
+  const over = failures.length - threshold;
+  const penaltyMin = Math.min(30, Math.pow(2, over)); // 1,2,4,8,16,30
+  const unlockAt = failures[0].createdAt.getTime() + penaltyMin * 60 * 1000;
+  return Math.max(0, Math.ceil((unlockAt - Date.now()) / 1000));
+}
 
 /**
- * Compte les echecs recents pour un couple (email, ip) et renvoie un eventuel
- * temps de blocage. Delai progressif : 5 echecs -> 1 min, puis x2 par echec
- * supplementaire (1, 2, 4, 8 min...), plafonne a 30 min.
+ * Evalue une tentative de connexion. Renvoie :
+ * - locked / retryAfterSec : refus avant meme de verifier le mot de passe ;
+ * - slowdownMs : delai a appliquer a la reponse (compte sous attaque).
  */
 export async function getLoginLockout(
   email: string,
   ip: string
-): Promise<{ locked: boolean; retryAfterSec: number }> {
+): Promise<{ locked: boolean; retryAfterSec: number; slowdownMs: number }> {
   const since = new Date(Date.now() - FAILURE_WINDOW_MS);
+  // IP inconnue (app lancee hors server.mjs) : on ne bloque pas toute la
+  // plateforme sur une IP partagee fictive.
+  const ipKnown = ip !== "unknown";
 
-  const recent = await prisma.loginLog.findMany({
-    where: {
-      success: false,
-      createdAt: { gte: since },
-      OR: [{ email }, { ip }],
-    },
+  // Echecs depuis le dernier succes de CE couple (email, ip).
+  const lastPairSuccess = await prisma.loginLog.findFirst({
+    where: { success: true, email, ip, createdAt: { gte: since } },
     orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const pairSince = lastPairSuccess?.createdAt ?? since;
+
+  const [pairFailures, ipFailures, emailFailureCount] = await Promise.all([
+    prisma.loginLog.findMany({
+      where: { success: false, email, ip, createdAt: { gt: pairSince } },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { createdAt: true },
+    }),
+    ipKnown
+      ? prisma.loginLog.findMany({
+          where: { success: false, ip, createdAt: { gte: since } },
+          orderBy: { createdAt: "desc" },
+          take: IP_MAX_FAILURES + 10,
+          select: { createdAt: true },
+        })
+      : Promise.resolve([]),
+    prisma.loginLog.count({
+      where: { success: false, email, createdAt: { gte: since } },
+    }),
+  ]);
+
+  const retryAfterSec = Math.max(
+    progressiveLock(pairFailures, PAIR_MAX_FAILURES),
+    progressiveLock(ipFailures, IP_MAX_FAILURES)
+  );
+  const slowdownMs =
+    emailFailureCount >= ACCOUNT_ATTACK_THRESHOLD ? ATTACK_SLOWDOWN_MS : 0;
+
+  return { locked: retryAfterSec > 0, retryAfterSec, slowdownMs };
+}
+
+/**
+ * Comptes cibles par des echecs de connexion sur une periode (alerte admin).
+ */
+export async function getTargetedAccounts(sinceMs = 24 * 60 * 60 * 1000) {
+  const since = new Date(Date.now() - sinceMs);
+  const rows = await prisma.loginLog.groupBy({
+    by: ["email"],
+    where: { success: false, createdAt: { gte: since } },
+    _count: { _all: true },
+    _max: { createdAt: true },
+    having: { email: { _count: { gte: ACCOUNT_ATTACK_THRESHOLD } } },
+    orderBy: { _count: { email: "desc" } },
     take: 20,
   });
-
-  // On ne compte que les echecs depuis le dernier succes eventuel dans la fenetre.
-  const lastSuccess = await prisma.loginLog.findFirst({
-    where: { success: true, email, createdAt: { gte: since } },
-    orderBy: { createdAt: "desc" },
-  });
-  const failures = lastSuccess
-    ? recent.filter((r) => r.createdAt > lastSuccess.createdAt)
-    : recent;
-
-  if (failures.length < MAX_FAILURES) {
-    return { locked: false, retryAfterSec: 0 };
-  }
-
-  const over = failures.length - MAX_FAILURES;
-  const penaltyMin = Math.min(30, Math.pow(2, over)); // 1,2,4,8,16,30
-  const lastFailure = failures[0].createdAt.getTime();
-  const unlockAt = lastFailure + penaltyMin * 60 * 1000;
-  const retryAfterSec = Math.ceil((unlockAt - Date.now()) / 1000);
-
-  return retryAfterSec > 0
-    ? { locked: true, retryAfterSec }
-    : { locked: false, retryAfterSec: 0 };
+  return Promise.all(
+    rows.map(async (r) => {
+      const ips = await prisma.loginLog.findMany({
+        where: { success: false, email: r.email, createdAt: { gte: since } },
+        distinct: ["ip"],
+        select: { ip: true },
+        take: 1000,
+      });
+      return {
+        email: r.email,
+        failures: r._count._all,
+        distinctIps: ips.length,
+        lastAttempt: r._max.createdAt,
+      };
+    })
+  );
 }

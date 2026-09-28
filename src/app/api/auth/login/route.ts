@@ -39,17 +39,27 @@ export async function POST(req: NextRequest) {
     return error("Identifiants invalides", 401);
   }
 
-  // Blocage progressif anti brute-force.
+  const hasTotp = typeof totp === "string" && /^\d{6}$/.test(totp);
+
+  // Blocage progressif anti brute-force (par couple email+ip et par ip,
+  // jamais par email seul) + ralentissement si le compte est vise en masse.
   const lock = await getLoginLockout(email, ip);
-  if (lock.locked) {
-    return error(
-      `Trop de tentatives. Reessayez dans ${Math.ceil(
-        lock.retryAfterSec / 60
-      )} min.`,
-      429,
-      { headers: { "Retry-After": String(lock.retryAfterSec) } }
+  if (lock.slowdownMs) await sleep(lock.slowdownMs);
+  // Reponse identique que le compte ait la 2FA ou non : le client propose
+  // alors un champ "code 2FA" (mot de passe + code valides passent).
+  const lockedResponse = () =>
+    json(
+      {
+        error: `Trop de tentatives. Reessayez dans ${Math.ceil(
+          lock.retryAfterSec / 60
+        )} min.`,
+        totpBypass: true,
+      },
+      { status: 429, headers: { "Retry-After": String(lock.retryAfterSec) } }
     );
-  }
+  // Sous blocage, on n'evalue le mot de passe que si un code 2FA est fourni
+  // (et on repond 429 a l'identique en cas d'echec : pas d'oracle).
+  if (lock.locked && !hasTotp) return lockedResponse();
 
   const user = await prisma.user.findUnique({ where: { email } });
 
@@ -60,22 +70,30 @@ export async function POST(req: NextRequest) {
     "$2b$12$Wzq0kkAXRfLnyoMqE1RgGu0z2M9noVgiFpSdIhASTbhXYiacphzwG";
   const ok = await bcrypt.compare(password, user?.passwordHash ?? dummyHash);
 
-  if (!user || !ok) {
-    await recordLogin({ userId: user?.id ?? null, email, ip, success: false });
-    return error("Identifiants invalides", 401);
-  }
-
-  // --- 2FA TOTP (si activee sur le compte) ---
-  if (user.totpSecret) {
-    if (typeof totp !== "string" || !/^\d{6}$/.test(totp)) {
-      // Mot de passe correct mais code manquant/mal forme : on demande la 2FA
-      // sans encore ouvrir la session complete.
-      return json({ requiresTwoFactor: true }, { status: 200 });
-    }
+  if (lock.locked) {
+    // Seule issue sous blocage : mot de passe ET 2FA valides.
     const { verifyTotp } = await import("@/lib/totp");
-    if (!verifyTotp(user.totpSecret, totp)) {
-      await recordLogin({ userId: user.id, email, ip, success: false });
-      return error("Code de verification invalide", 401);
+    if (!user || !ok || !user.totpSecret || !verifyTotp(user.totpSecret, totp as string)) {
+      return lockedResponse();
+    }
+  } else {
+    if (!user || !ok) {
+      await recordLogin({ userId: user?.id ?? null, email, ip, success: false });
+      return error("Identifiants invalides", 401);
+    }
+
+    // --- 2FA TOTP (si activee sur le compte) ---
+    if (user.totpSecret) {
+      if (!hasTotp) {
+        // Mot de passe correct mais code manquant/mal forme : on demande la 2FA
+        // sans encore ouvrir la session complete.
+        return json({ requiresTwoFactor: true }, { status: 200 });
+      }
+      const { verifyTotp } = await import("@/lib/totp");
+      if (!verifyTotp(user.totpSecret, totp as string)) {
+        await recordLogin({ userId: user.id, email, ip, success: false });
+        return error("Code de verification invalide", 401);
+      }
     }
   }
 
@@ -85,4 +103,8 @@ export async function POST(req: NextRequest) {
   await recordLogin({ userId: user.id, email, ip, success: true });
 
   return json({ ok: true, isAdmin: user.isAdmin });
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

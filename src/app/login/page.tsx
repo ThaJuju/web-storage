@@ -10,6 +10,8 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [totp, setTotp] = useState("");
   const [needTotp, setNeedTotp] = useState(false);
+  // Blocage anti brute-force : un code 2FA valide permet de passer.
+  const [lockedTotp, setLockedTotp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -24,7 +26,7 @@ export default function LoginPage() {
         body: JSON.stringify({
           email,
           password,
-          ...(needTotp ? { totp } : {}),
+          ...(needTotp || (lockedTotp && totp) ? { totp } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -36,6 +38,7 @@ export default function LoginPage() {
       }
       if (!res.ok) {
         setError(data.error ?? "Échec de la connexion");
+        if (res.status === 429 && data.totpBypass) setLockedTotp(true);
         return;
       }
       router.replace("/");
@@ -152,7 +155,7 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {needTotp && (
+          {(needTotp || lockedTotp) && (
             <div>
               <label
                 htmlFor="totp"
@@ -167,7 +170,7 @@ export default function LoginPage() {
                 pattern="\d{6}"
                 maxLength={6}
                 autoFocus
-                required
+                required={needTotp}
                 value={totp}
                 onChange={(e) =>
                   setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))
@@ -176,8 +179,9 @@ export default function LoginPage() {
                 placeholder="000000"
               />
               <p className="mt-1.5 text-xs text-slate-400">
-                Saisissez le code à 6 chiffres de votre application
-                d&apos;authentification.
+                {needTotp
+                  ? "Saisissez le code à 6 chiffres de votre application d’authentification."
+                  : "Si la 2FA est activée sur votre compte, saisissez votre code pour vous connecter malgré le blocage."}
               </p>
             </div>
           )}

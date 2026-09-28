@@ -98,10 +98,15 @@ storage/   fichiers binaires (gitignored)
 - Cookies `httpOnly` + `secure` (prod) + `sameSite=strict`.
 - **Anti-CSRF double** : `sameSite=strict` + vérification du header `Origin`
   sur toute mutation.
-- **Anti brute-force** : après 5 échecs (par compte / par IP), blocage à délai
-  progressif (1 → 2 → 4 → 8 min, plafonné à 30 min). Réponse identique que le
-  compte existe ou non, comparaison bcrypt même sur compte inexistant
-  (anti-énumération / timing).
+- **Anti brute-force** : blocage à délai progressif (1 → 2 → 4 → 8 min,
+  plafonné à 30 min) après 5 échecs d'un même couple **(compte, IP)** ou
+  20 échecs d'une même IP tous comptes confondus. Jamais de blocage sur le
+  seul e-mail (sinon n'importe qui pourrait bloquer le propriétaire) : un
+  compte visé depuis de nombreuses IP est seulement **ralenti** (2 s par
+  tentative) et signalé à l'admin dans le journal des connexions. Pendant
+  un blocage, mot de passe **et** code 2FA valides permettent quand même de
+  se connecter. Réponse identique que le compte existe ou non, comparaison
+  bcrypt même sur compte inexistant (anti-énumération / timing).
 - **Rate limiting** (token bucket en mémoire, borné à 10 000 clés) sur le
   login (par IP réelle du client, voir `TRUST_PROXY`) et sur l'upload (par
   utilisateur : rafale de 200 fichiers puis 10/s, 3 envois simultanés max).
