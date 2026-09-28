@@ -332,12 +332,23 @@ pm2 startOrReload ecosystem.config.js
 
 ---
 
-## 5. Vérifications effectuées
+## 5. Tests et intégration continue
 
-Le flux complet a été testé de bout en bout : login (+ rejet CSRF, mauvais mot
-de passe, session absente), création de dossier, sanitization de
-`../../etc/passwd` → `passwd`, upload streamé, upload de dossier avec
-arborescence conservée, lecture texte inline, **streaming Range** (`206 Partial
-Content` + seek), zip d'un dossier, suppression récursive avec mise à jour du
-quota et nettoyage disque, **isolation entre utilisateurs** (accès croisé →
-404) et autorisation admin (non-admin → 403).
+```bash
+npm run test:unit          # fonctions pures : validation, TOTP (vecteurs RFC 6238), MIME…
+npm run build && npm test  # + intégration : serveur réel sur base/stockage temporaires
+```
+
+Les tests d'intégration (`tests/integration/`) démarrent `server.mjs` sur le
+build de production avec une base SQLite et un `STORAGE_DIR` **temporaires**
+(jamais les données réelles) et couvrent notamment : upload > 10 Mo (taille
+et contenu exacts, y compris en chunked), taille max et quota pendant le
+transfert, isolation entre utilisateurs (IDOR), unicité des noms et cycles,
+suppression récursive + quota + disque, révocation des sessions, cookie
+invalide sans boucle de redirection, XSS stockée, zip avec fichier
+manquant, et la politique anti brute-force.
+
+La CI GitHub Actions (`.github/workflows/ci.yml`) enchaîne à chaque push et
+pull request : `npm ci`, lint, `tsc --noEmit`, build, tests, et
+`npm audit --omit=dev --audit-level=high`. Dependabot propose les mises à
+jour npm et GitHub Actions.
