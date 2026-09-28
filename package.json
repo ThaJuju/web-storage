@@ -21,12 +21,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/client": "^6.19.3",
+    "@prisma/client": "^7.10.0",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
     "iron-session": "^8.0.4",
     "next": "16.3.6",
-    "prisma": "^6.19.3",
+    "prisma": "^7.10.0",
     "qrcode": "1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"
