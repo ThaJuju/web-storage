@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getAuthenticatedUser, sessionOptions } from "@/lib/session";
+import {
+  SESSION_COOKIE_NAME,
+  getAuthenticatedUser,
+  isHttps,
+} from "@/lib/session";
 
 /**
  * GET /api/auth/expired
@@ -17,13 +21,13 @@ export async function GET(req: NextRequest) {
   // La ligne Session eventuelle est deja supprimee par getAuthenticatedUser
   // (expiree) ou n'existe plus (revoquee) : il ne reste que le cookie.
   const res = NextResponse.redirect(new URL("/login", req.url));
-  res.cookies.set(sessionOptions.cookieName, "", {
+  res.cookies.set(SESSION_COOKIE_NAME, "", {
     path: "/",
     maxAge: 0,
     expires: new Date(0),
     httpOnly: true,
     sameSite: "strict",
-    secure: sessionOptions.cookieOptions?.secure,
+    secure: isHttps,
   });
   return res;
 }

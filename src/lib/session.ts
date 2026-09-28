@@ -22,31 +22,43 @@ export const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 // lastSeenAt n'est reecrit qu'au plus une fois par minute (limite les writes).
 const LAST_SEEN_THROTTLE_MS = 60 * 1000;
 
-const secret = process.env.SESSION_SECRET;
-if (!secret || secret.length < 32) {
-  throw new Error(
-    "SESSION_SECRET manquant ou trop court (>= 32 caracteres requis). Voir .env.example."
-  );
-}
+export const SESSION_COOKIE_NAME = "webstorage_session";
 
 // Cookie "secure" (HTTPS uniquement) : active seulement si l'app est servie
 // derriere du TLS. En acces HTTP (LAN/local), le mettre a true empecherait le
-// navigateur d'envoyer le cookie -> login casse. Piloté par APP_HTTPS.
+// navigateur d'envoyer le cookie -> login casse. Piloté par APP_HTTPS (et non
+// par NODE_ENV).
 export const isHttps = process.env.APP_HTTPS === "true";
 
-export const sessionOptions: SessionOptions = {
-  password: secret,
-  cookieName: "webstorage_session",
-  cookieOptions: {
-    httpOnly: true,
-    secure: isHttps,
-    sameSite: "strict",
-    path: "/",
-    // L'inactivite est geree cote serveur (lastSeenAt) ; le cookie vit au
-    // plus aussi longtemps que la session absolue.
-    maxAge: SESSION_MAX_AGE_MS / 1000,
-  },
-};
+let cachedOptions: SessionOptions | null = null;
+
+/**
+ * Options iron-session. SESSION_SECRET est verifie a la premiere utilisation
+ * (et non au chargement du module) : `next build` n'a pas besoin du secret.
+ */
+export function sessionOptions(): SessionOptions {
+  if (cachedOptions) return cachedOptions;
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "SESSION_SECRET manquant ou trop court (>= 32 caracteres requis). Voir .env.example."
+    );
+  }
+  cachedOptions = {
+    password: secret,
+    cookieName: SESSION_COOKIE_NAME,
+    cookieOptions: {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: "strict",
+      path: "/",
+      // L'inactivite est geree cote serveur (lastSeenAt) ; le cookie vit au
+      // plus aussi longtemps que la session absolue.
+      maxAge: SESSION_MAX_AGE_MS / 1000,
+    },
+  };
+  return cachedOptions;
+}
 
 // Cookie present mais session invalide : route qui efface le cookie puis
 // renvoie sur /login (evite une boucle de redirection).
@@ -54,7 +66,7 @@ export const SESSION_EXPIRED_PATH = "/api/auth/expired";
 
 export async function getSession() {
   const cookieStore = await cookies();
-  return getIronSession<SessionData>(cookieStore, sessionOptions);
+  return getIronSession<SessionData>(cookieStore, sessionOptions());
 }
 
 function hashSid(sid: string): string {

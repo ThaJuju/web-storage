@@ -10,7 +10,8 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: "3300",
-        // "true" uniquement derriere un reverse-proxy de confiance (nginx...).
+        // Derriere un reverse-proxy TLS local (cf. README, Deploiement) :
+        // TRUST_PROXY "true", APP_HTTPS "true", LISTEN_HOST "127.0.0.1".
         TRUST_PROXY: "false",
       },
       instances: 1,

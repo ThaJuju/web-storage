@@ -112,10 +112,10 @@ export const CHALLENGE_MAX_ATTEMPTS = 5;
 
 async function challengeCookie() {
   return getIronSession<{ cid?: string }>(await cookies(), {
-    ...sessionOptions,
+    ...sessionOptions(),
     cookieName: CHALLENGE_COOKIE,
     cookieOptions: {
-      ...sessionOptions.cookieOptions,
+      ...sessionOptions().cookieOptions,
       maxAge: CHALLENGE_TTL_MS / 1000,
     },
   });

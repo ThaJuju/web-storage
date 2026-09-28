@@ -17,6 +17,9 @@ import next from "next";
 
 const dev = process.argv.includes("--dev");
 const port = parseInt(process.env.PORT || "3000", 10);
+// Interface d'ecoute : toutes par defaut ; 127.0.0.1 derriere un reverse-proxy
+// local pour que le port HTTP ne soit pas joignable directement.
+const listenHost = process.env.LISTEN_HOST || undefined;
 const trustProxy = process.env.TRUST_PROXY === "true";
 
 // Signale a l'app que l'en-tete x-webstorage-client-ip est fiable.
@@ -54,9 +57,9 @@ createServer((req, res) => {
     delete req.headers["x-real-ip"];
   }
   handle(req, res);
-}).listen(port, () => {
+}).listen(port, listenHost, () => {
   console.log(
-    `> web-storage pret sur le port ${port} (${
+    `> web-storage pret sur ${listenHost ?? "*"}:${port} (${
       dev ? "dev" : "production"
     }, TRUST_PROXY=${trustProxy})`
   );

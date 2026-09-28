@@ -20,7 +20,9 @@ function isPublicPath(pathname: string): boolean {
     pathname === "/api/auth/expired" ||
     pathname === "/api/auth/2fa" ||
     pathname.startsWith("/_next") ||
-    pathname === "/favicon.ico"
+    pathname === "/favicon.ico" ||
+    // Fichiers statiques de public/ (non sensibles).
+    /^\/[\w.-]+\.(?:png|jpe?g|gif|svg|ico|webp)$/.test(pathname)
   );
 }
 
@@ -53,7 +55,7 @@ export function proxy(req: NextRequest) {
   // propre CSP "sandbox" ; on ne l'ecrase pas.
   if (pathname.startsWith("/api/")) {
     const res = NextResponse.next();
-    setCommonHeaders(res);
+    setCommonHeaders(res, isHttps);
     return res;
   }
 
@@ -89,11 +91,24 @@ export function proxy(req: NextRequest) {
 
   const res = NextResponse.next({ request: { headers: requestHeaders } });
   res.headers.set("Content-Security-Policy", csp);
-  setCommonHeaders(res);
+  setCommonHeaders(res, isHttps);
   return res;
 }
 
-function setCommonHeaders(res: NextResponse) {
+function setCommonHeaders(res: NextResponse, isHttps: boolean) {
+  // HSTS uniquement si l'app est reellement servie en HTTPS (sinon le
+  // navigateur refuserait ensuite tout acces HTTP au domaine).
+  if (isHttps) {
+    res.headers.set(
+      "Strict-Transport-Security",
+      "max-age=63072000; includeSubDomains"
+    );
+  }
+  // Isolation : pas de partage de contexte de navigation ni de ressources
+  // (dont les fichiers servis par /api/nodes/[id]/content) avec d'autres
+  // origines.
+  res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  res.headers.set("Cross-Origin-Resource-Policy", "same-origin");
   res.headers.set("X-Frame-Options", "DENY");
   res.headers.set("X-Content-Type-Options", "nosniff");
   res.headers.set("Referrer-Policy", "no-referrer");
@@ -105,13 +120,14 @@ function setCommonHeaders(res: NextResponse) {
 }
 
 export const config = {
-  // On applique le proxy partout sauf :
-  //  - aux assets statiques deja filtres ;
+  // On applique le proxy partout (y compris aux images de public/, qui
+  // recoivent ainsi les en-tetes de securite) sauf :
+  //  - aux assets de build (_next/static, _next/image) et au favicon ;
   //  - a la route d'upload : des qu'un proxy intercepte une requete, Next
   //    bufferise son corps jusqu'a proxyClientMaxBodySize (10 Mo) et TRONQUE
   //    le reste -> fichiers corrompus. La route fait sa propre auth
   //    (requireUser) et ne sert que du JSON, le proxy n'y apporte rien.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/nodes/[^/]+/upload$|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/nodes/[^/]+/upload$).*)",
   ],
 };

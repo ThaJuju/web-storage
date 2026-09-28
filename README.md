@@ -15,7 +15,7 @@ la volée et indicateur de quota. Aucune inscription publique.
 |---|---|
 | Framework | Next.js 16 (App Router, TypeScript) — frontend + API dans une seule app |
 | Base de données | SQLite via Prisma (métadonnées uniquement) |
-| Sessions | `iron-session` — cookie chiffré `httpOnly` / `secure` / `sameSite=strict` |
+| Sessions | table `Session` en base ; cookie `iron-session` chiffré (`httpOnly`, `sameSite=strict`, `secure` si `APP_HTTPS=true`) ne portant qu'un identifiant |
 | Mots de passe | `bcrypt` (coût 12) |
 | Zip à la volée | `archiver` (streaming, sans fichier temporaire) |
 | UI | Tailwind CSS |
@@ -42,16 +42,21 @@ la volée et indicateur de quota. Aucune inscription publique.
 ```
 User      id, email(unique), passwordHash, isAdmin,
           quotaBytes (défaut 50 Go), usedBytes (dénormalisé, transactionnel),
-          totpSecret (2FA optionnelle)
+          totpSecret (chiffré), totpPendingSecret, totpLastCounter,
+          totpRecoveryCodes (empreintes)                // 2FA optionnelle
 
 Node      id, ownerId, parentId (null = racine), type ("FILE"|"FOLDER"),
           name (affiché), size, mimeType, storageKey (UUID disque, unique)
           @@unique([ownerId, parentId, name])   // pas de doublon dans un dossier
+          + index unique partiel (ownerId, name) WHERE parentId IS NULL (racine)
 
 LoginLog  id, userId, email, ip, success, createdAt   // journal des connexions
 
 Session   id (sha256 de l'identifiant du cookie), userId,
           createdAt, lastSeenAt, expiresAt              // sessions serveur
+
+TwoFactorChallenge id (sha256), userId, ip, attempts, expiresAt
+                                                        // étape 2FA du login
 ```
 
 Fichiers et dossiers partagent la table `Node` (arbre par `parentId`) : le
@@ -70,6 +75,7 @@ npm run reconcile -- --fix # recalcule usedBytes et supprime les orphelins disqu
 ### Structure des dossiers
 
 ```
+server.mjs                        # serveur HTTP (IP client fiable) autour de Next
 src/
 ├── proxy.ts                      # redirection deny-by-default + CSP à nonce + headers
 ├── app/
@@ -78,32 +84,41 @@ src/
 │   ├── (drive)/                  # groupe protégé (auth vérifiée côté serveur)
 │   │   ├── layout.tsx            # sidebar + indicateur d'espace + auto-logout
 │   │   ├── folder/[id]/          # explorateur (racine = /folder/root)
-│   │   └── admin/logins/         # journal des connexions (admin)
+│   │   ├── security/             # 2FA du compte (enrôlement, codes de récupération)
+│   │   └── admin/users | logins/ # gestion des comptes, journal des connexions
 │   └── api/
-│       ├── auth/login | logout/
+│       ├── auth/login | 2fa | logout | session | expired/
+│       ├── account/2fa/          # enrôlement / désactivation 2FA
 │       ├── nodes/                # GET listing/recherche, POST création dossier
 │       ├── nodes/[id]/           # PATCH renommer/déplacer, DELETE
 │       ├── nodes/[id]/upload/    # upload streamé (corps brut → disque)
 │       ├── nodes/[id]/content/   # download + streaming Range (mp4)
-│       ├── nodes/[id]/zip/       # zip d'un dossier à la volée
+│       ├── nodes/[id]/zip/       # zip d'un dossier (ou de "root") à la volée
 │       ├── usage/                # quota
-│       └── admin/logins/
+│       └── admin/users | logins/
 ├── lib/
-│   ├── db, session, storage, nodes, rate-limit, validation, totp, api, format
+│   ├── db, session, storage, nodes, rate-limit, validation, api, format
+│   ├── totp, totp-crypto, two-factor, mime, client-ip, activity
 └── components/
     ├── DriveShell, Sidebar, StorageMeter, UsageContext, Modal
+    ├── account/                  # page Sécurité
+    ├── admin/                    # gestion des utilisateurs
     ├── explorer/                 # explorateur, upload drag & drop, déplacement
     └── preview/
         ├── registry.tsx          # mime → composant   ← POINT D'EXTENSION previews
         ├── VideoPreview, TextPreview, ImagePreview
-prisma/    schema.prisma, seed.ts
-scripts/   set-password.ts
+prisma/    schema.prisma, seed.ts, migrations/
+scripts/   set-password, reconcile, encrypt-totp-secrets, find-truncated-uploads
 storage/   fichiers binaires (gitignored)
 ```
 
 ### Fonctionnalités de sécurité
 
-- Cookies `httpOnly` + `secure` (prod) + `sameSite=strict`.
+- Cookies `httpOnly` + `sameSite=strict` ; `secure` **uniquement si
+  `APP_HTTPS=true`** (`NODE_ENV=production` ne l'active pas : en accès
+  HTTP simple, un cookie `secure` ne serait jamais renvoyé par le
+  navigateur). En production exposée sur Internet, servir l'app en HTTPS
+  et mettre `APP_HTTPS=true` (voir « Déploiement »).
 - **Anti-CSRF double** : `sameSite=strict` + vérification du header `Origin`
   sur toute mutation.
 - **Anti brute-force** : blocage à délai progressif (1 → 2 → 4 → 8 min,
@@ -135,12 +150,24 @@ storage/   fichiers binaires (gitignored)
   partagée entre onglets, et un upload en cours ou une vidéo en lecture
   comptent comme de l'activité (heartbeat serveur toutes les 5 min tant
   que l'utilisateur est actif).
-- **En-têtes** : CSP à nonce (`default-src 'self'`, `media-src 'self'`…),
+- **En-têtes** (posés par `src/proxy.ts` sur toutes les réponses hors
+  `_next/static`) : CSP à nonce par requête (`script-src 'self'
+  'nonce-…' 'strict-dynamic'`, sans `'unsafe-inline'` pour les scripts ;
+  toutes les pages sont rendues dynamiquement pour recevoir le nonce),
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy`, `Permissions-Policy`.
+  `Referrer-Policy: no-referrer`, `Permissions-Policy`,
+  `Cross-Origin-Opener-Policy` et `Cross-Origin-Resource-Policy:
+  same-origin`, et `Strict-Transport-Security` (2 ans) quand
+  `APP_HTTPS=true`.
+- **Contenus utilisateur isolés** : la route `content` ne sert inline que
+  des types sûrs (vidéo, audio, images matricielles, PDF), le texte en
+  `text/plain`, le reste en téléchargement, toujours sous une CSP
+  `sandbox` dédiée (un `.html` / `.svg` piégé ne s'exécute pas).
 - **2FA TOTP** compatible Google Authenticator (`src/lib/totp.ts`,
   `src/lib/two-factor.ts`) : enrôlement depuis la page Sécurité, codes de
   récupération, anti-rejeu, secret chiffré au repos (voir plus bas).
+- `SESSION_SECRET` n'est vérifié qu'à l'exécution : `next build` ne
+  l'exige pas.
 
 ### Ajouter un format de prévisualisation
 
@@ -179,6 +206,8 @@ Variables du `.env` :
 | `MAX_UPLOAD_SIZE_BYTES` | taille max d'un fichier (défaut 4 Go) |
 | `APP_HTTPS` | `true` si l'app est servie en HTTPS (cookie `secure`, HSTS…) |
 | `TRUST_PROXY` | `true` **uniquement** derrière un reverse-proxy de confiance (voir ci-dessous) |
+| `TOTP_ENCRYPTION_KEY` | clé de chiffrement des secrets 2FA (optionnelle, ≥ 32 car.) |
+| `LISTEN_HOST` | interface d'écoute (`127.0.0.1` derrière un reverse-proxy local) |
 
 ```bash
 # 3. Base de données (crée le schéma)
@@ -243,6 +272,9 @@ puis affichage **unique** de 10 codes de récupération à conserver.
 - Le secret est chiffré en base (AES-256-GCM). Clé dérivée de
   `TOTP_ENCRYPTION_KEY` si défini (recommandé : permet de changer
   `SESSION_SECRET` sans casser les 2FA), sinon de `SESSION_SECRET`.
+  ⚠️ La clé doit rester stable : la définir **avant** que des comptes
+  activent la 2FA (la changer ensuite rend leurs secrets illisibles ; il
+  faudrait alors réinitialiser leur 2FA depuis l'admin).
   Après une mise à jour depuis une version antérieure :
   `npm run encrypt-totp` chiffre les secrets encore stockés en clair.
 - À la connexion, l'étape 2FA est tenue côté serveur (5 min, 5 essais) :
@@ -251,7 +283,56 @@ puis affichage **unique** de 10 codes de récupération à conserver.
 
 ---
 
-## 4. Vérifications effectuées
+## 4. Déploiement en production
+
+`server.mjs` parle **HTTP** (port `PORT`, 3300 avec `ecosystem.config.js`).
+Exposé tel quel, les mots de passe et cookies circulent en clair et le
+cookie ne peut pas être `secure`. En production, placer l'app derrière un
+reverse-proxy TLS (nginx, Caddy…) et régler :
+
+| Variable | Valeur | Effet |
+|---|---|---|
+| `APP_HTTPS` | `true` | cookie `secure`, HSTS, `upgrade-insecure-requests` |
+| `TRUST_PROXY` | `true` | IP client = dernière entrée de `X-Forwarded-For` (ajoutée par le proxy) |
+| `LISTEN_HOST` | `127.0.0.1` | le port HTTP n'est joignable que par le proxy local |
+
+Exemple nginx :
+
+```nginx
+server {
+  listen 443 ssl http2;
+  server_name stockage.exemple.fr;
+  ssl_certificate     /etc/letsencrypt/live/stockage.exemple.fr/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/stockage.exemple.fr/privkey.pem;
+
+  client_max_body_size 0;          # la taille max est contrôlée par l'app
+  proxy_request_buffering off;     # upload streamé jusqu'à l'app
+  proxy_buffering off;             # download / zip / vidéo streamés
+  proxy_read_timeout 1h;
+  proxy_send_timeout 1h;
+
+  location / {
+    proxy_pass http://127.0.0.1:3300;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+  }
+}
+server { listen 80; server_name stockage.exemple.fr; return 301 https://$host$request_uri; }
+```
+
+Mise à jour d'une instance existante :
+
+```bash
+npm ci && npm run build
+npm run db:deploy          # migrations
+npm run encrypt-totp       # chiffre les secrets 2FA encore en clair
+pm2 startOrReload ecosystem.config.js
+```
+
+---
+
+## 5. Vérifications effectuées
 
 Le flux complet a été testé de bout en bout : login (+ rejet CSRF, mauvais mot
 de passe, session absente), création de dossier, sanitization de
