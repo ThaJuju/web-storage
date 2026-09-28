@@ -21,12 +21,11 @@ export function MoveModal({
   const [current, setCurrent] = useState("root");
   const [folders, setFolders] = useState<PublicNode[]>([]);
   const [crumbs, setCrumbs] = useState<Crumb[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(
+  const fetchFolder = useCallback(
     async (folderId: string) => {
-      setLoading(true);
       try {
         const res = await fetch(`/api/nodes?folder=${folderId}`, {
           cache: "no-store",
@@ -47,9 +46,14 @@ export function MoveModal({
     [node.id]
   );
 
+  const load = (folderId: string) => {
+    setLoading(true);
+    fetchFolder(folderId);
+  };
+
   useEffect(() => {
-    load("root");
-  }, [load]);
+    fetchFolder("root");
+  }, [fetchFolder]);
 
   const cannotMoveHere = current === (node.parentId ?? "root");
 

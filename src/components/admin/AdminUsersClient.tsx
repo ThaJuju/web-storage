@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchJson } from "@/lib/fetch-json";
 import { Modal } from "@/components/Modal";
 import { formatBytes, formatDate } from "@/lib/format";
 
@@ -36,24 +37,21 @@ export function AdminUsersClient() {
     setTimeout(() => setToast(null), 2800);
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/users", { cache: "no-store" });
-      if (!res.ok) {
-        setError("Erreur de chargement.");
-        return;
-      }
-      const data = await res.json();
-      setUsers(data.users);
-      setTotals(data.totals);
-    } catch {
-      setError("Erreur réseau.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // setState uniquement dans le callback .then() : jamais synchrone dans l'effet.
+  const load = useCallback(
+    () =>
+      fetchJson<{ users: UserRow[]; totals: Totals }>("/api/admin/users").then(({ res, data }) => {
+        if (data) {
+          setUsers(data.users);
+          setTotals(data.totals);
+          setError(null);
+        } else {
+          setError(res ? "Erreur de chargement." : "Erreur réseau.");
+        }
+        setLoading(false);
+      }),
+    []
+  );
 
   useEffect(() => {
     load();

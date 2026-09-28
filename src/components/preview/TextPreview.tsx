@@ -11,12 +11,11 @@ export function TextPreview({ src, node }: PreviewComponentProps) {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const tooLarge = Number(node.size) > MAX_TEXT_BYTES;
+
   useEffect(() => {
+    if (tooLarge) return;
     let cancelled = false;
-    if (Number(node.size) > MAX_TEXT_BYTES) {
-      setError("Fichier trop volumineux pour l'aperçu.");
-      return;
-    }
     fetch(src, { cache: "no-store" })
       .then((r) => (r.ok ? r.text() : Promise.reject()))
       .then((t) => !cancelled && setContent(t))
@@ -24,8 +23,15 @@ export function TextPreview({ src, node }: PreviewComponentProps) {
     return () => {
       cancelled = true;
     };
-  }, [src, node.size]);
+  }, [src, tooLarge]);
 
+  if (tooLarge) {
+    return (
+      <p className="p-6 text-sm text-slate-400">
+        Fichier trop volumineux pour l&apos;aperçu.
+      </p>
+    );
+  }
   if (error) {
     return <p className="p-6 text-sm text-slate-400">{error}</p>;
   }

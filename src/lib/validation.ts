@@ -21,7 +21,6 @@ export function sanitizeName(input: unknown): string | null {
   name = name.trim();
 
   // Caracteres de controle (0x00-0x1F, 0x7F).
-  // eslint-disable-next-line no-control-regex
   name = name.replace(/[\x00-\x1f\x7f]/g, "");
   // Caracteres reserves usuels des systemes de fichiers.
   name = name.replace(/[<>:"/\\|?*]/g, "");

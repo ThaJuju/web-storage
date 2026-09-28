@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchJson } from "@/lib/fetch-json";
 import { useRouter } from "next/navigation";
 import type { FolderListing, PublicNode } from "@/lib/types";
 import { useUsage } from "@/components/UsageContext";
@@ -58,28 +59,33 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
     setTimeout(() => setToast(null), 2500);
   }, []);
 
-  const load = useCallback(async () => {
+  // Changement de dossier : on repasse en chargement (ajustement pendant le
+  // rendu plutot que dans un effet).
+  const [loadedFolderId, setLoadedFolderId] = useState(folderId);
+  if (loadedFolderId !== folderId) {
+    setLoadedFolderId(folderId);
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/nodes?folder=${folderId}`, {
-        cache: "no-store",
-      });
-      if (res.status === 404) {
-        setError("Dossier introuvable.");
-        return;
-      }
-      if (!res.ok) {
-        setError("Erreur de chargement.");
-        return;
-      }
-      setListing(await res.json());
-    } catch {
-      setError("Erreur réseau.");
-    } finally {
-      setLoading(false);
-    }
-  }, [folderId]);
+  }
+
+  // setState uniquement dans le callback .then() : jamais synchrone dans l'effet.
+  const load = useCallback(
+    () =>
+      fetchJson<FolderListing>(`/api/nodes?folder=${folderId}`).then(({ res, data }) => {
+        if (data) {
+          setListing(data);
+          setError(null);
+        } else if (!res) {
+          setError("Erreur réseau.");
+        } else if (res.status === 404) {
+          setError("Dossier introuvable.");
+        } else {
+          setError("Erreur de chargement.");
+        }
+        setLoading(false);
+      }),
+    [folderId]
+  );
 
   useEffect(() => {
     load();
@@ -95,10 +101,7 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
   // --- Recherche (debounce) ---
   useEffect(() => {
     const q = search.trim();
-    if (!q) {
-      setSearchResults(null);
-      return;
-    }
+    if (!q) return;
     const t = setTimeout(async () => {
       const res = await fetch(`/api/nodes?q=${encodeURIComponent(q)}`, {
         cache: "no-store",
@@ -219,8 +222,9 @@ export function ExplorerClient({ folderId }: { folderId: string }) {
     e.target.value = "";
   }
 
-  const rows = searchResults ?? listing?.children ?? [];
-  const isSearching = searchResults !== null;
+  const activeResults = search.trim() ? searchResults : null;
+  const rows = activeResults ?? listing?.children ?? [];
+  const isSearching = activeResults !== null;
 
   return (
     <div

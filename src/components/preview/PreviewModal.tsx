@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import type { PublicNode } from "@/lib/types";
-import { getPreview } from "./registry";
+import { renderPreview } from "./registry";
 import { formatBytes } from "@/lib/format";
 
 export function PreviewModal({
@@ -21,7 +21,7 @@ export function PreviewModal({
   }, [onClose]);
 
   const src = `/api/nodes/${node.id}/content`;
-  const Preview = getPreview(node);
+  const preview = renderPreview(node, src);
 
   return (
     <div
@@ -62,9 +62,7 @@ export function PreviewModal({
           </div>
         </div>
 
-        {Preview ? (
-          <Preview node={node} src={src} />
-        ) : (
+        {preview ?? (
           <div className="rounded-lg bg-slate-900 p-8 text-center">
             <p className="text-slate-400">
               Aperçu non disponible pour ce type de fichier.

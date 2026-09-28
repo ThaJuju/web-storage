@@ -59,6 +59,12 @@ export function getPreview(
   return registry.find((e) => e.match(node))?.Component ?? null;
 }
 
+/** Rend l'apercu adapte au fichier, ou null si aucun format ne correspond. */
+export function renderPreview(node: PublicNode, src: string) {
+  const Preview = getPreview(node);
+  return Preview ? <Preview node={node} src={src} /> : null;
+}
+
 export function canPreview(node: PublicNode): boolean {
   return getPreview(node) !== null;
 }
