@@ -13,7 +13,8 @@
     "seed": "tsx prisma/seed.ts",
     "set-password": "tsx scripts/set-password.ts",
     "find-truncated": "tsx scripts/find-truncated-uploads.ts",
-    "reconcile": "tsx scripts/reconcile.ts"
+    "reconcile": "tsx scripts/reconcile.ts",
+    "encrypt-totp": "tsx scripts/encrypt-totp-secrets.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -22,6 +23,7 @@
     "iron-session": "^8.0.4",
     "next": "16.3.6",
     "prisma": "^6.19.3",
+    "qrcode": "1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -29,6 +31,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/archiver": "^6.0.4",
     "@types/node": "^20",
+    "@types/qrcode": "1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

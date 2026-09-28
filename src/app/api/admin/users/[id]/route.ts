@@ -4,9 +4,9 @@ import { prisma } from "@/lib/db";
 import { error, json, requireAdmin, isResponse } from "@/lib/api";
 import { deleteUserStorage } from "@/lib/storage";
 import { revokeUserSessions } from "@/lib/session";
-import { parseQuota } from "@/lib/validation";
+import { parseQuota, passwordError } from "@/lib/validation";
+import { TWO_FACTOR_DISABLED } from "@/lib/two-factor";
 
-const MIN_PASSWORD_LENGTH = 10;
 
 /**
  * PATCH /api/admin/users/[id]
@@ -38,19 +38,15 @@ export async function PATCH(
     quotaBytes?: bigint;
     isAdmin?: boolean;
     totpSecret?: null;
+    totpPendingSecret?: null;
+    totpLastCounter?: null;
+    totpRecoveryCodes?: null;
   } = {};
 
   if (b.password !== undefined) {
-    if (
-      typeof b.password !== "string" ||
-      b.password.length < MIN_PASSWORD_LENGTH
-    ) {
-      return error(
-        `Le mot de passe doit faire au moins ${MIN_PASSWORD_LENGTH} caracteres`,
-        400
-      );
-    }
-    data.passwordHash = await bcrypt.hash(b.password, 12);
+    const pwError = passwordError(b.password);
+    if (pwError) return error(pwError, 400);
+    data.passwordHash = await bcrypt.hash(b.password as string, 12);
   }
 
   if (b.quotaGb !== undefined) {
@@ -83,7 +79,7 @@ export async function PATCH(
   }
 
   if (b.disableTwoFactor === true) {
-    data.totpSecret = null;
+    Object.assign(data, TWO_FACTOR_DISABLED);
   }
 
   const revoke =

@@ -73,3 +73,19 @@ export function parseQuota(input: unknown): bigint | null {
   if (!Number.isFinite(n) || n <= 0 || n > 100_000) return null;
   return BigInt(Math.round(n * 1_000_000_000));
 }
+
+export const MIN_PASSWORD_LENGTH = 10;
+// bcrypt ignore silencieusement tout ce qui depasse 72 OCTETS : on refuse
+// plutot que de tronquer sans le dire.
+export const MAX_PASSWORD_BYTES = 72;
+
+/** Message d'erreur si le mot de passe est refuse, sinon null. */
+export function passwordError(input: unknown): string | null {
+  if (typeof input !== "string" || input.length < MIN_PASSWORD_LENGTH) {
+    return `Le mot de passe doit faire au moins ${MIN_PASSWORD_LENGTH} caracteres`;
+  }
+  if (Buffer.byteLength(input, "utf8") > MAX_PASSWORD_BYTES) {
+    return `Le mot de passe ne doit pas depasser ${MAX_PASSWORD_BYTES} octets (72 caracteres sans accents)`;
+  }
+  return null;
+}

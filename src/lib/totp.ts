@@ -49,24 +49,39 @@ function hotp(secret: Buffer, counter: number): string {
 
 /**
  * Verifie un code TOTP a 6 chiffres, avec une fenetre de +/- 1 pas (30 s) pour
- * tolerer le decalage d'horloge. Comparaison a temps constant.
+ * tolerer le decalage d'horloge. Comparaison a temps constant. Renvoie le
+ * compteur (pas de temps) correspondant, ou null : l'appelant doit refuser
+ * un compteur <= au dernier accepte (anti-rejeu, RFC 6238 §5.2).
  */
-export function verifyTotp(
+export function matchTotp(
   secretBase32: string,
   token: string,
-  stepSeconds = 30,
-  window = 1
-): boolean {
-  if (!/^\d{6}$/.test(token)) return false;
+  { stepSeconds = 30, window = 1, now = Date.now() } = {}
+): number | null {
+  if (!/^\d{6}$/.test(token)) return null;
   const secret = base32Decode(secretBase32);
-  const counter = Math.floor(Date.now() / 1000 / stepSeconds);
+  const counter = Math.floor(now / 1000 / stepSeconds);
+  let matched: number | null = null;
   for (let w = -window; w <= window; w++) {
     const expected = hotp(secret, counter + w);
     const a = Buffer.from(expected);
     const b = Buffer.from(token);
-    if (a.length === b.length && timingSafeEqual(a, b)) return true;
+    // Pas de sortie anticipee : temps constant quelle que soit la position.
+    if (a.length === b.length && timingSafeEqual(a, b) && matched === null) {
+      matched = counter + w;
+    }
   }
-  return false;
+  return matched;
+}
+
+/** Variante booleenne (sans anti-rejeu) : a reserver aux tests. */
+export function verifyTotp(secretBase32: string, token: string): boolean {
+  return matchTotp(secretBase32, token) !== null;
+}
+
+/** Code courant (tests, outils). */
+export function generateTotp(secretBase32: string, now = Date.now()): string {
+  return hotp(base32Decode(secretBase32), Math.floor(now / 1000 / 30));
 }
 
 /** URI otpauth:// a encoder en QR code pour l'enrolement. */

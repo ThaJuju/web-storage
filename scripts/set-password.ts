@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
+import { passwordError } from "../src/lib/validation";
 
 const prisma = new PrismaClient();
 
@@ -48,8 +49,9 @@ async function main() {
   }
 
   const pw1 = await askHidden(`Nouveau mot de passe pour ${email} : `);
-  if (pw1.length < 10) {
-    console.error("Le mot de passe doit faire au moins 10 caracteres.");
+  const pwError = passwordError(pw1);
+  if (pwError) {
+    console.error(`${pwError}.`);
     process.exit(1);
   }
   const pw2 = await askHidden("Confirmez le mot de passe : ");

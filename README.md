@@ -138,9 +138,9 @@ storage/   fichiers binaires (gitignored)
 - **En-têtes** : CSP à nonce (`default-src 'self'`, `media-src 'self'`…),
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy`, `Permissions-Policy`.
-- **2FA TOTP** (bonus) compatible Google Authenticator, implémentée sans
-  dépendance externe (`src/lib/totp.ts`). Activable par compte via le champ
-  `totpSecret` (voir plus bas).
+- **2FA TOTP** compatible Google Authenticator (`src/lib/totp.ts`,
+  `src/lib/two-factor.ts`) : enrôlement depuis la page Sécurité, codes de
+  récupération, anti-rejeu, secret chiffré au repos (voir plus bas).
 
 ### Ajouter un format de prévisualisation
 
@@ -229,26 +229,25 @@ npm run set-password -- admin@example.com
 ```
 
 Le mot de passe est saisi de façon masquée (jamais dans l'historique shell ni
-dans les logs). Longueur minimale : 10 caractères.
+dans les logs). Longueur : 10 caractères minimum, 72 octets maximum
+(limite de bcrypt, refusée plutôt que tronquée en silence).
 
 ### Activer la 2FA (optionnel)
 
-Générer un secret et l'associer à un compte :
+Chaque utilisateur active la 2FA depuis la page **Sécurité** (menu de
+gauche) : QR code à scanner dans une application d'authentification
+(Google Authenticator, Aegis, 1Password…), vérification d'un premier code,
+puis affichage **unique** de 10 codes de récupération à conserver.
 
-```bash
-npx tsx -e "import('./src/lib/totp').then(async m => {
-  const { PrismaClient } = require('@prisma/client');
-  const p = new PrismaClient();
-  const secret = m.generateTotpSecret();
-  await p.user.update({ where: { email: 'admin@example.com' }, data: { totpSecret: secret } });
-  console.log('Secret (a scanner dans Google Authenticator) :');
-  console.log(m.totpAuthUri(secret, 'admin@example.com'));
-  await p.\$disconnect();
-})"
-```
-
-Scanner l'URI `otpauth://` affichée (via un QR code) dans Google
-Authenticator. À la prochaine connexion, un code à 6 chiffres sera demandé.
+- Un code TOTP ne peut servir qu'une fois (anti-rejeu, RFC 6238 §5.2).
+- Le secret est chiffré en base (AES-256-GCM). Clé dérivée de
+  `TOTP_ENCRYPTION_KEY` si défini (recommandé : permet de changer
+  `SESSION_SECRET` sans casser les 2FA), sinon de `SESSION_SECRET`.
+  Après une mise à jour depuis une version antérieure :
+  `npm run encrypt-totp` chiffre les secrets encore stockés en clair.
+- À la connexion, l'étape 2FA est tenue côté serveur (5 min, 5 essais) :
+  le mot de passe n'est pas renvoyé avec le code.
+- Un admin peut réinitialiser la 2FA d'un compte (page Utilisateurs).
 
 ---
 

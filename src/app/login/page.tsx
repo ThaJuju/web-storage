@@ -20,25 +20,35 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          ...(needTotp || (lockedTotp && totp) ? { totp } : {}),
-        }),
-      });
+      // Etape 2 : seul le code est envoye (le serveur a garde l'etape en
+      // memoire apres verification du mot de passe).
+      const res = needTotp
+        ? await fetch("/api/auth/2fa", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: totp }),
+          })
+        : await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email,
+              password,
+              ...(lockedTotp && totp ? { totp } : {}),
+            }),
+          });
       const data = await res.json().catch(() => ({}));
 
       if (res.ok && data.requiresTwoFactor) {
         setNeedTotp(true);
+        setTotp("");
         setError(null);
         return;
       }
       if (!res.ok) {
         setError(data.error ?? "Échec de la connexion");
         if (res.status === 429 && data.totpBypass) setLockedTotp(true);
+        if (data.restart) backToCredentials(data.error);
         return;
       }
       router.replace("/");
@@ -48,6 +58,13 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Revenir a l'etape e-mail / mot de passe (corriger l'adresse...).
+  function backToCredentials(message: string | null = null) {
+    setNeedTotp(false);
+    setTotp("");
+    setError(message);
   }
 
   const inputClass =
@@ -166,23 +183,37 @@ export default function LoginPage() {
               <input
                 id="totp"
                 type="text"
-                inputMode="numeric"
-                pattern="\d{6}"
-                maxLength={6}
+                autoComplete="one-time-code"
+                maxLength={11}
                 autoFocus
                 required={needTotp}
                 value={totp}
                 onChange={(e) =>
-                  setTotp(e.target.value.replace(/\D/g, "").slice(0, 6))
+                  // 6 chiffres, ou code de recuperation XXXXX-XXXXX.
+                  setTotp(
+                    e.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9-]/g, "")
+                      .slice(0, 11)
+                  )
                 }
-                className={`${inputClass} text-center text-xl tracking-[0.5em]`}
+                className={`${inputClass} text-center text-xl tracking-[0.3em]`}
                 placeholder="000000"
               />
               <p className="mt-1.5 text-xs text-slate-400">
                 {needTotp
-                  ? "Saisissez le code à 6 chiffres de votre application d’authentification."
+                  ? "Saisissez le code à 6 chiffres de votre application d’authentification, ou un code de récupération."
                   : "Si la 2FA est activée sur votre compte, saisissez votre code pour vous connecter malgré le blocage."}
               </p>
+              {needTotp && (
+                <button
+                  type="button"
+                  onClick={() => backToCredentials()}
+                  className="mt-2 text-xs font-medium text-blue-400 hover:text-blue-300"
+                >
+                  ← Modifier l&apos;adresse e-mail ou le mot de passe
+                </button>
+              )}
             </div>
           )}
 

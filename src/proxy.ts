@@ -18,6 +18,7 @@ function isPublicPath(pathname: string): boolean {
     pathname === "/login" ||
     pathname === "/api/auth/login" ||
     pathname === "/api/auth/expired" ||
+    pathname === "/api/auth/2fa" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   );

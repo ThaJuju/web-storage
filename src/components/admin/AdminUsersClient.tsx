@@ -297,7 +297,7 @@ function CreateUserModal({
             placeholder="utilisateur@exemple.fr"
           />
         </Field>
-        <Field label="Mot de passe (10 caractères min.)">
+        <Field label="Mot de passe (10 à 72 caractères)">
           <input
             type="text"
             required
@@ -467,7 +467,7 @@ function ManageUserModal({
 
         {/* Mot de passe */}
         <div className="space-y-2">
-          <Field label="Nouveau mot de passe (10 car. min.)">
+          <Field label="Nouveau mot de passe (10 à 72 car.)">
             <div className="flex gap-2">
               <input
                 type="text"

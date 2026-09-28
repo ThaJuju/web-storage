@@ -61,6 +61,17 @@ export function Sidebar({
           </svg>
           Mes fichiers
         </Link>
+        <Link
+          href="/security"
+          onClick={onNavigate}
+          className={linkClass(pathname === "/security")}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.6" />
+            <path d="M8 10V7a4 4 0 118 0v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+          Sécurité
+        </Link>
 
         {isAdmin && (
           <>

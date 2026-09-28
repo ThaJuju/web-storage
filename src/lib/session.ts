@@ -107,6 +107,13 @@ export async function revokeUserSessions(userId: string): Promise<void> {
   await prisma.session.deleteMany({ where: { userId } });
 }
 
+/** Revoque toutes les sessions de l'utilisateur SAUF la session courante. */
+export async function revokeOtherSessions(userId: string): Promise<void> {
+  const session = await getSession();
+  const current = session.sid ? hashSid(session.sid) : "";
+  await prisma.session.deleteMany({ where: { userId, id: { not: current } } });
+}
+
 /**
  * Renvoie l'utilisateur authentifie, ou null si :
  * - pas de cookie / cookie invalide,

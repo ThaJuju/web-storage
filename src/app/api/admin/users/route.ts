@@ -2,9 +2,8 @@ import { type NextRequest } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { error, json, requireAdmin, isResponse } from "@/lib/api";
-import { isValidEmail, parseQuota } from "@/lib/validation";
+import { isValidEmail, parseQuota, passwordError } from "@/lib/validation";
 
-const MIN_PASSWORD_LENGTH = 10;
 const DEFAULT_QUOTA_BYTES = 50_000_000_000n; // 50 Go
 
 /** GET /api/admin/users -> liste des comptes avec usage + totaux. */
@@ -80,12 +79,8 @@ export async function POST(req: NextRequest) {
     typeof b.email === "string" ? b.email.trim().toLowerCase() : "";
   if (!isValidEmail(email)) return error("Adresse e-mail invalide", 400);
 
-  if (typeof b.password !== "string" || b.password.length < MIN_PASSWORD_LENGTH) {
-    return error(
-      `Le mot de passe doit faire au moins ${MIN_PASSWORD_LENGTH} caracteres`,
-      400
-    );
-  }
+  const pwError = passwordError(b.password);
+  if (pwError) return error(pwError, 400);
 
   const quotaBytes = parseQuota(b.quotaGb) ?? DEFAULT_QUOTA_BYTES;
   const isAdmin = b.isAdmin === true;
@@ -93,7 +88,7 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return error("Un compte existe deja avec cet e-mail", 409);
 
-  const passwordHash = await bcrypt.hash(b.password, 12);
+  const passwordHash = await bcrypt.hash(b.password as string, 12);
   const user = await prisma.user.create({
     data: { email, passwordHash, isAdmin, quotaBytes },
     select: { id: true, email: true, isAdmin: true },

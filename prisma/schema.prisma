@@ -8,18 +8,26 @@ datasource db {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  passwordHash String
-  isAdmin      Boolean    @default(false)
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  isAdmin             Boolean              @default(false)
   // 50 Go decimaux : coherent avec l'affichage "x Go / 50 Go" (base 1000).
-  quotaBytes   BigInt     @default(50000000000)
-  usedBytes    BigInt     @default(0)
-  totpSecret   String?
-  createdAt    DateTime   @default(now())
-  nodes        Node[]
-  loginLogs    LoginLog[]
-  sessions     Session[]
+  quotaBytes          BigInt               @default(50000000000)
+  usedBytes           BigInt               @default(0)
+  // Secret TOTP chiffre (AES-256-GCM, cf. src/lib/totp-crypto.ts).
+  totpSecret          String?
+  // Secret en cours d'enrolement (chiffre), confirme par un premier code.
+  totpPendingSecret   String?
+  // Dernier pas TOTP accepte : un code deja utilise est refuse (anti-rejeu).
+  totpLastCounter     Int?
+  // Codes de recuperation : JSON d'empreintes SHA-256 (usage unique).
+  totpRecoveryCodes   String?
+  createdAt           DateTime             @default(now())
+  nodes               Node[]
+  loginLogs           LoginLog[]
+  sessions            Session[]
+  twoFactorChallenges TwoFactorChallenge[]
 }
 
 model Node {
@@ -75,4 +83,19 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+// Etape 2FA de la connexion : creee apres un mot de passe valide, le cookie
+// (chiffre) n'en porte que l'identifiant. Le client n'a plus a renvoyer le
+// mot de passe avec le code ; nombre d'essais et duree de vie bornes.
+model TwoFactorChallenge {
+  id        String   @id // sha256(identifiant du cookie), hex
+  userId    String
+  ip        String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
