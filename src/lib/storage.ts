@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 // Racine de stockage, resolue une fois. JAMAIS dans public/.
@@ -31,29 +31,38 @@ export function newStorageKey(): string {
   return randomUUID();
 }
 
+/** Le flux a depasse la limite autorisee : ecriture interrompue. */
+export class UploadLimitExceeded extends Error {}
+
 /**
  * Ecrit un flux entrant sur disque en streaming (jamais bufferise en RAM).
- * Renvoie la taille reelle ecrite. Le respect du quota est verifie par
- * l'appelant AVANT (borne max) et APRES (taille exacte) via une transaction DB.
+ * Les octets sont comptes au fil de l'eau : des que `maxBytes` est depasse,
+ * l'ecriture est interrompue et le fichier partiel supprime
+ * (UploadLimitExceeded). Renvoie la taille reelle ecrite ; la coherence du
+ * quota est ensuite garantie par une transaction DB chez l'appelant.
  */
 export async function writeStreamToDisk(
   ownerId: string,
   storageKey: string,
-  stream: ReadableStream<Uint8Array>
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: bigint
 ): Promise<bigint> {
   const dest = diskPath(ownerId, storageKey);
   await mkdir(path.dirname(dest), { recursive: true });
 
   let written = 0n;
   const nodeStream = Readable.fromWeb(stream as never);
+  const limiter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      written += BigInt(chunk.length);
+      if (written > maxBytes) cb(new UploadLimitExceeded());
+      else cb(null, chunk);
+    },
+  });
   const out = createWriteStream(dest);
 
-  nodeStream.on("data", (chunk: Buffer) => {
-    written += BigInt(chunk.length);
-  });
-
   try {
-    await pipeline(nodeStream, out);
+    await pipeline(nodeStream, limiter, out);
   } catch (err) {
     // Nettoyage best-effort en cas d'echec d'ecriture.
     await unlink(dest).catch(() => {});

@@ -4,10 +4,12 @@ import { error, json, requireUser, isResponse } from "@/lib/api";
 import { ensureSubfolder, resolveFolder, toPublicNode } from "@/lib/nodes";
 import {
   MAX_UPLOAD_SIZE_BYTES,
+  UploadLimitExceeded,
   deleteFromDisk,
   newStorageKey,
   writeStreamToDisk,
 } from "@/lib/storage";
+import { rateLimit } from "@/lib/rate-limit";
 import { sanitizeName, sanitizeRelativePath } from "@/lib/validation";
 import { normalizeMimeType } from "@/lib/mime";
 
@@ -33,7 +35,46 @@ export async function POST(
   if (isResponse(user)) return user;
   const { id } = await params;
 
-  const folder = await resolveFolder(user.userId, id);
+  // Rate-limit par utilisateur (rafale de 200 puis 10 fichiers/s : large pour
+  // un upload de dossier, mais borne un script abusif).
+  const rl = rateLimit(`upload:${user.userId}`, {
+    capacity: 200,
+    refillPerSec: 10,
+  });
+  if (!rl.allowed) {
+    return error("Trop d'envois, reessayez plus tard.", 429, {
+      headers: { "Retry-After": String(rl.retryAfterSec) },
+    });
+  }
+
+  // Nombre d'uploads simultanes par utilisateur borne (le client les envoie
+  // un par un ; au-dela, c'est un abus qui remplirait le disque en parallele).
+  const running = activeUploads.get(user.userId) ?? 0;
+  if (running >= MAX_CONCURRENT_UPLOADS) {
+    return error("Trop d'envois simultanes, patientez.", 429, {
+      headers: { "Retry-After": "5" },
+    });
+  }
+  activeUploads.set(user.userId, running + 1);
+  try {
+    return await handleUpload(req, user.userId, id);
+  } finally {
+    const n = (activeUploads.get(user.userId) ?? 1) - 1;
+    if (n <= 0) activeUploads.delete(user.userId);
+    else activeUploads.set(user.userId, n);
+  }
+}
+
+const MAX_CONCURRENT_UPLOADS = 3;
+const activeUploads = new Map<string, number>();
+
+async function handleUpload(
+  req: NextRequest,
+  userId: string,
+  id: string
+): Promise<Response> {
+
+  const folder = await resolveFolder(userId, id);
   if (!folder) return error("Dossier cible introuvable", 404);
 
   // Determine le nom du fichier et l'arborescence a recreer.
@@ -63,23 +104,43 @@ export async function POST(
     return error("Fichier trop volumineux", 413);
   }
 
-  // Ecriture streamee sur disque ; on connait ensuite la taille exacte.
+  // Pre-controle du quota restant : on refuse avant d'ecrire le moindre octet.
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { usedBytes: true, quotaBytes: true },
+  });
+  if (!account) return error("Non authentifie", 401);
+  const remaining = account.quotaBytes - account.usedBytes;
+  if (remaining <= 0n || (declared !== null && declared > remaining)) {
+    return error("Quota de stockage depasse", 413);
+  }
+
+  // Ecriture streamee sur disque, interrompue des que la limite effective
+  // (taille max d'un fichier ou quota restant) est depassee.
+  const quotaIsLimit = remaining < MAX_UPLOAD_SIZE_BYTES;
+  const limit = quotaIsLimit ? remaining : MAX_UPLOAD_SIZE_BYTES;
   const storageKey = newStorageKey();
   let actualSize: bigint;
   try {
-    actualSize = await writeStreamToDisk(user.userId, storageKey, req.body);
-  } catch {
+    actualSize = await writeStreamToDisk(
+      userId,
+      storageKey,
+      req.body,
+      limit
+    );
+  } catch (e) {
+    if (e instanceof UploadLimitExceeded) {
+      return error(
+        quotaIsLimit ? "Quota de stockage depasse" : "Fichier trop volumineux",
+        413
+      );
+    }
     return error("Echec de l'ecriture du fichier", 500);
-  }
-
-  if (actualSize > MAX_UPLOAD_SIZE_BYTES) {
-    await deleteFromDisk(user.userId, storageKey);
-    return error("Fichier trop volumineux", 413);
   }
   // Garde-fou : ne jamais stocker en silence un fichier tronque (corps coupe
   // par un intermediaire, connexion interrompue...).
   if (declared !== null && actualSize !== declared) {
-    await deleteFromDisk(user.userId, storageKey);
+    await deleteFromDisk(userId, storageKey);
     return error("Fichier incomplet : taille recue differente de la taille annoncee", 400);
   }
 
@@ -90,7 +151,7 @@ export async function POST(
     const node = await prisma.$transaction(async (tx) => {
       // Verifie le quota de facon atomique (relecture dans la transaction).
       const u = await tx.user.findUniqueOrThrow({
-        where: { id: user.userId },
+        where: { id: userId },
         select: { usedBytes: true, quotaBytes: true },
       });
       if (u.usedBytes + actualSize > u.quotaBytes) {
@@ -100,15 +161,15 @@ export async function POST(
       // Recree l'arborescence de dossiers (upload de dossier).
       let parentId = folder.id;
       for (const folderName of folders) {
-        parentId = await ensureSubfolder(tx, user.userId, parentId, folderName);
+        parentId = await ensureSubfolder(tx, userId, parentId, folderName);
       }
 
       // Nom libre (evite les collisions -> suffixe numerique).
-      const finalName = await freeName(tx, user.userId, parentId, fileName!);
+      const finalName = await freeName(tx, userId, parentId, fileName!);
 
       const created = await tx.node.create({
         data: {
-          ownerId: user.userId,
+          ownerId: userId,
           parentId,
           type: "FILE",
           name: finalName,
@@ -118,7 +179,7 @@ export async function POST(
         },
       });
       await tx.user.update({
-        where: { id: user.userId },
+        where: { id: userId },
         data: { usedBytes: { increment: actualSize } },
       });
       return created;
@@ -127,7 +188,7 @@ export async function POST(
     return json({ node: toPublicNode(node) }, { status: 201 });
   } catch (e) {
     // Rollback disque si la transaction echoue.
-    await deleteFromDisk(user.userId, storageKey);
+    await deleteFromDisk(userId, storageKey);
     if (e instanceof QuotaExceeded) {
       return error("Quota de stockage depasse", 413);
     }

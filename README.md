@@ -103,7 +103,13 @@ storage/   fichiers binaires (gitignored)
   compte existe ou non, comparaison bcrypt même sur compte inexistant
   (anti-énumération / timing).
 - **Rate limiting** (token bucket en mémoire, borné à 10 000 clés) sur le
-  login, par IP réelle du client (voir `TRUST_PROXY`).
+  login (par IP réelle du client, voir `TRUST_PROXY`) et sur l'upload (par
+  utilisateur : rafale de 200 fichiers puis 10/s, 3 envois simultanés max).
+- **Upload borné pendant le transfert** : refus immédiat si le
+  `Content-Length` dépasse la taille max ou le quota restant, et comptage
+  des octets au fil de l'eau : l'écriture est interrompue (fichier partiel
+  supprimé, 413) dès que `min(MAX_UPLOAD_SIZE_BYTES, quota restant)` est
+  dépassé, y compris en `Transfer-Encoding: chunked`.
 - **Journal des connexions** conservé 90 jours.
 - **Sessions côté serveur** : le cookie chiffré ne contient qu'un
   identifiant aléatoire ; utilisateur et rôle sont relus en base à chaque
