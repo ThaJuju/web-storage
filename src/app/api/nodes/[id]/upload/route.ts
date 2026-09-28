@@ -53,8 +53,12 @@ export async function POST(
   if (!req.body) return error("Corps de requete vide", 400);
 
   // Pre-controle de taille via Content-Length (borne, pas source de verite).
-  const declared = BigInt(req.headers.get("content-length") ?? "0");
-  if (declared > MAX_UPLOAD_SIZE_BYTES) {
+  const lengthHeader = req.headers.get("content-length");
+  if (lengthHeader !== null && !/^\d+$/.test(lengthHeader)) {
+    return error("Content-Length invalide", 400);
+  }
+  const declared = lengthHeader !== null ? BigInt(lengthHeader) : null;
+  if (declared !== null && declared > MAX_UPLOAD_SIZE_BYTES) {
     return error("Fichier trop volumineux", 413);
   }
 
@@ -70,6 +74,12 @@ export async function POST(
   if (actualSize > MAX_UPLOAD_SIZE_BYTES) {
     await deleteFromDisk(user.userId, storageKey);
     return error("Fichier trop volumineux", 413);
+  }
+  // Garde-fou : ne jamais stocker en silence un fichier tronque (corps coupe
+  // par un intermediaire, connexion interrompue...).
+  if (declared !== null && actualSize !== declared) {
+    await deleteFromDisk(user.userId, storageKey);
+    return error("Fichier incomplet : taille recue differente de la taille annoncee", 400);
   }
 
   const mimeType = req.headers.get("content-type") || null;

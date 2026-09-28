@@ -90,8 +90,13 @@ export function proxy(req: NextRequest) {
 }
 
 export const config = {
-  // On applique le middleware partout sauf aux assets statiques deja filtres.
+  // On applique le proxy partout sauf :
+  //  - aux assets statiques deja filtres ;
+  //  - a la route d'upload : des qu'un proxy intercepte une requete, Next
+  //    bufferise son corps jusqu'a proxyClientMaxBodySize (10 Mo) et TRONQUE
+  //    le reste -> fichiers corrompus. La route fait sa propre auth
+  //    (requireUser) et ne sert que du JSON, le proxy n'y apporte rien.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/nodes/[^/]+/upload$|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)$).*)",
   ],
 };
