@@ -122,8 +122,11 @@ storage/   fichiers binaires (gitignored)
   suppression du compte ou « déconnecter toutes les sessions » (admin)
   révoquent immédiatement les sessions concernées. Durée de vie absolue :
   12 h.
-- **Déconnexion automatique** après 30 min d'inactivité (TTL glissant côté
-  serveur + minuteur côté client).
+- **Déconnexion automatique** après 30 min d'inactivité : TTL glissant
+  côté serveur (qui fait foi) + minuteur côté client. L'activité est
+  partagée entre onglets, et un upload en cours ou une vidéo en lecture
+  comptent comme de l'activité (heartbeat serveur toutes les 5 min tant
+  que l'utilisateur est actif).
 - **En-têtes** : CSP à nonce (`default-src 'self'`, `media-src 'self'`…),
   `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy`, `Permissions-Policy`.

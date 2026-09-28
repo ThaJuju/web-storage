@@ -1,6 +1,7 @@
 "use client";
 
 import type { PreviewComponentProps } from "./registry";
+import { markActivity } from "@/lib/activity";
 
 /**
  * Lecteur video integre. La source pointe vers la route content authentifiee
@@ -14,6 +15,9 @@ export function VideoPreview({ src, node }: PreviewComponentProps) {
       controls
       autoPlay
       playsInline
+      // Une video en lecture compte comme une activite (timeupdate ne se
+      // declenche pas en pause).
+      onTimeUpdate={markActivity}
       className="max-h-[75vh] w-full rounded-lg bg-black"
     >
       Votre navigateur ne peut pas lire cette vidéo.

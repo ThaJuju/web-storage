@@ -2,6 +2,7 @@ import { getIronSession, type SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "./db";
+import { INACTIVITY_TIMEOUT_MS } from "./constants";
 
 /**
  * Sessions cote serveur. Le cookie iron-session (chiffre + signe) ne contient
@@ -15,8 +16,7 @@ export interface SessionData {
   sid?: string;
 }
 
-// Deconnexion automatique apres 30 min d'inactivite (TTL glissant).
-export const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
+export { INACTIVITY_TIMEOUT_MS };
 // Duree de vie absolue d'une session, meme utilisee en continu.
 export const SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 // lastSeenAt n'est reecrit qu'au plus une fois par minute (limite les writes).
@@ -112,9 +112,12 @@ export async function revokeUserSessions(userId: string): Promise<void> {
  * - pas de cookie / cookie invalide,
  * - session inconnue en base (revoquee, compte supprime...),
  * - inactivite depassee ou duree de vie absolue atteinte.
- * Le role admin est relu en base a chaque appel.
+ * Le role admin est relu en base a chaque appel. `touch: false` verifie la
+ * session sans prolonger son TTL glissant.
  */
-export async function getAuthenticatedUser(): Promise<{
+export async function getAuthenticatedUser({
+  touch = true,
+}: { touch?: boolean } = {}): Promise<{
   userId: string;
   isAdmin: boolean;
 } | null> {
@@ -143,7 +146,7 @@ export async function getAuthenticatedUser(): Promise<{
 
   // TTL glissant cote serveur : fonctionne aussi depuis un Server Component
   // (aucune ecriture de cookie necessaire).
-  if (now - row.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS) {
+  if (touch && now - row.lastSeenAt.getTime() > LAST_SEEN_THROTTLE_MS) {
     await prisma.session.updateMany({
       where: { id },
       data: { lastSeenAt: new Date(now) },

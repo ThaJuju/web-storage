@@ -1,10 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { UsageProvider } from "./UsageContext";
-import { INACTIVITY_LOGOUT_MS } from "@/lib/constants";
+import { INACTIVITY_TIMEOUT_MS } from "@/lib/constants";
+import { lastActivity, markActivity } from "@/lib/activity";
+
+// Frequence de verification du minuteur d'inactivite.
+const CHECK_INTERVAL_MS = 30 * 1000;
+// Tant que l'utilisateur est actif, on prolonge la session serveur au plus
+// toutes les 5 min (des interactions sans appel d'API, un long upload ou une
+// video ne rafraichiraient sinon pas lastSeenAt).
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 
 export function DriveShell({
   isAdmin,
@@ -15,25 +23,71 @@ export function DriveShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Deconnexion automatique cote client apres inactivite (aligne sur le
-  // TTL serveur). Reinitialise sur toute interaction.
+  // Deconnexion automatique apres inactivite. L'activite est partagee entre
+  // onglets (localStorage) et inclut uploads et lecture video (markActivity).
+  // A l'echeance, on NE deconnecte PAS aveuglement : on demande au serveur si
+  // la session est encore valide (c'est lui qui fait foi via lastSeenAt).
   useEffect(() => {
-    function reset() {
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(async () => {
-        await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
-        router.replace("/login");
-        router.refresh();
-      }, INACTIVITY_LOGOUT_MS);
-    }
     const events = ["mousemove", "keydown", "click", "scroll", "touchstart"];
-    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
-    reset();
+    events.forEach((e) =>
+      window.addEventListener(e, markActivity, { passive: true })
+    );
+    markActivity();
+
+    let lastHeartbeat = Date.now();
+    let checking = false;
+
+    async function sessionValid(touch: boolean): Promise<boolean | null> {
+      try {
+        const res = await fetch(
+          `/api/auth/session${touch ? "?touch=1" : ""}`,
+          { cache: "no-store" }
+        );
+        if (res.status === 401) return false;
+        return res.ok ? true : null;
+      } catch {
+        return null; // erreur reseau : on ne conclut rien
+      }
+    }
+
+    async function check() {
+      if (checking) return;
+      checking = true;
+      try {
+        const now = Date.now();
+        const last = lastActivity();
+        if (now - last < INACTIVITY_TIMEOUT_MS) {
+          // Actif : heartbeat si de l'activite a eu lieu depuis le dernier.
+          if (last > lastHeartbeat && now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+            lastHeartbeat = now;
+            if ((await sessionValid(true)) === false) expired();
+          }
+          return;
+        }
+        // Inactif (tous onglets confondus) : le serveur tranche.
+        if ((await sessionValid(false)) === false) expired();
+      } finally {
+        checking = false;
+      }
+    }
+
+    function expired() {
+      router.replace("/login");
+      router.refresh();
+    }
+
+    const interval = setInterval(check, CHECK_INTERVAL_MS);
+    // Onglet qui redevient visible (ordinateur sorti de veille...) : verifier
+    // tout de suite plutot qu'au prochain tick.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
-      events.forEach((e) => window.removeEventListener(e, reset));
-      if (timer.current) clearTimeout(timer.current);
+      events.forEach((e) => window.removeEventListener(e, markActivity));
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
     };
   }, [router]);
 

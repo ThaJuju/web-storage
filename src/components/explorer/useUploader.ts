@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { markActivity } from "@/lib/activity";
 
 export interface UploadItem {
   id: string;
@@ -47,6 +48,9 @@ export function useUploader(onEachDone: () => void) {
           xhr.setRequestHeader("Content-Type", input.file.type);
         }
         xhr.upload.onprogress = (e) => {
+          // Un upload en cours compte comme une activite (pas de deconnexion
+          // automatique au milieu d'un long transfert).
+          markActivity();
           if (e.lengthComputable) {
             update(id, { progress: Math.round((e.loaded / e.total) * 100) });
           }
