@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getAuthenticatedUser } from "@/lib/session";
+import { SESSION_EXPIRED_PATH, getAuthenticatedUser } from "@/lib/session";
 import { DriveShell } from "@/components/DriveShell";
 
 /**
@@ -13,7 +13,7 @@ export default async function DriveLayout({
   children: React.ReactNode;
 }) {
   const user = await getAuthenticatedUser();
-  if (!user) redirect("/login");
+  if (!user) redirect(SESSION_EXPIRED_PATH);
 
   return <DriveShell isAdmin={user.isAdmin}>{children}</DriveShell>;
 }

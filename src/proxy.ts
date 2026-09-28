@@ -17,6 +17,7 @@ function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/login" ||
     pathname === "/api/auth/login" ||
+    pathname === "/api/auth/expired" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico"
   );
@@ -36,12 +37,9 @@ export function proxy(req: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
-  // Deja connecte -> pas de raison de revoir /login.
-  if (hasSession && pathname === "/login") {
-    const url = req.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
-  }
+  // NB : pas de redirection /login -> / sur la seule PRESENCE du cookie : un
+  // cookie invalide provoquait une boucle infinie (/login -> / -> /login).
+  // C'est app/login/layout.tsx qui redirige, apres validation en base.
 
   const isDev = process.env.NODE_ENV !== "production";
   // upgrade-insecure-requests forcerait le navigateur a passer en HTTPS : a

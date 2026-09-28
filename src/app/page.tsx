@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
-import { getAuthenticatedUser } from "@/lib/session";
+import { SESSION_EXPIRED_PATH, getAuthenticatedUser } from "@/lib/session";
 
 export default async function Home() {
   const user = await getAuthenticatedUser();
-  if (!user) redirect("/login");
+  if (!user) redirect(SESSION_EXPIRED_PATH);
   redirect("/folder/root");
 }

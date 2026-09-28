@@ -48,6 +48,10 @@ export const sessionOptions: SessionOptions = {
   },
 };
 
+// Cookie present mais session invalide : route qui efface le cookie puis
+// renvoie sur /login (evite une boucle de redirection).
+export const SESSION_EXPIRED_PATH = "/api/auth/expired";
+
 export async function getSession() {
   const cookieStore = await cookies();
   return getIronSession<SessionData>(cookieStore, sessionOptions);

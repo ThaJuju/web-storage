@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
-import { getAuthenticatedUser } from "@/lib/session";
+import { SESSION_EXPIRED_PATH, getAuthenticatedUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { formatDate } from "@/lib/format";
 
 /** Journal des connexions, reserve a l'admin (rendu cote serveur). */
 export default async function LoginsPage() {
   const user = await getAuthenticatedUser();
-  if (!user) redirect("/login");
+  if (!user) redirect(SESSION_EXPIRED_PATH);
   if (!user.isAdmin) redirect("/folder/root");
 
   const logs = await prisma.loginLog.findMany({
