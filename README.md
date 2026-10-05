@@ -183,7 +183,7 @@ authentifiée) et l'enregistrer avec un prédicat `match`. Exemple pour les PDF 
 
 ## 2. Installation et lancement en local
 
-Prérequis : **Node.js 20+**.
+Prérequis : **Node.js 22.12+**.
 
 ```bash
 # 1. Dépendances
