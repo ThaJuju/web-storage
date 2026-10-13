@@ -1,5 +1,5 @@
 import { type NextRequest } from "next/server";
-import archiver, { type Archiver } from "archiver";
+import { ZipArchive, type Archiver } from "archiver";
 import { createReadStream, type ReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { PassThrough, Readable } from "node:stream";
@@ -39,7 +39,7 @@ export async function GET(
     ? (await prisma.node.findUniqueOrThrow({ where: { id: folder.id } })).name
     : "Mes fichiers";
 
-  const archive = archiver("zip", { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
   const passthrough = new PassThrough();
   archive.on("error", (err) => passthrough.destroy(err));
   archive.pipe(passthrough);
