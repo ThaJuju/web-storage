@@ -10,6 +10,11 @@ updates:
         patterns: ["next", "eslint-config-next"]
       prisma:
         patterns: ["prisma", "@prisma/*"]
+    ignore:
+      # Les types doivent suivre le runtime (Node 22, cf. README et CI) :
+      # une majeure plus recente exposerait des API absentes en production.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
