@@ -79,7 +79,8 @@ describe("chiffrement des secrets TOTP", () => {
 
   it("detecte une alteration (tag GCM)", () => {
     const enc = encryptTotpSecret(RFC_SECRET);
-    const tampered = enc.slice(0, -2) + (enc.endsWith("A") ? "B" : "A") + enc.slice(-1);
+    // Remplace l'avant-dernier caractere par un autre (toujours different).
+    const tampered = enc.slice(0, -2) + (enc.at(-2) === "A" ? "B" : "A") + enc.slice(-1);
     expect(() => decryptTotpSecret(tampered)).toThrow();
   });
 });
