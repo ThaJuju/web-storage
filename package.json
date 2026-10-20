@@ -21,14 +21,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/adapter-libsql": "7.10.0",
-    "@prisma/client": "7.10.0",
+    "@prisma/adapter-libsql": "7.10.1",
+    "@prisma/client": "7.10.1",
     "archiver": "^8.0.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "18.0.7",
     "iron-session": "^8.0.4",
     "next": "16.4.2",
-    "prisma": "7.10.0",
+    "prisma": "7.10.1",
     "qrcode": "1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0"
