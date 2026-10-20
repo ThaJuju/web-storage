@@ -10,6 +10,10 @@ updates:
         patterns: ["next", "eslint-config-next"]
       prisma:
         patterns: ["prisma", "@prisma/*"]
+      # react-dom exige la meme version exacte de react : separees, les deux
+      # PR echouent chacune a `npm ci` (conflit de peer dependency).
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
     ignore:
       # Les types doivent suivre le runtime (Node 22, cf. README et CI) :
       # une majeure plus recente exposerait des API absentes en production.
